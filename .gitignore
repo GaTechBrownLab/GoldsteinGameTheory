@@ -47,3 +47,27 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# R project file
+GoldsteinGameTheory.Rproj
+
+# Python
+.venv/
+
+# Mac
+.DS_Store
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+#data files 
+results/
+diagnostics/
+figures/
+postproc/
+
+# vs code
+.vscode/
+
+# old files 
+old/
