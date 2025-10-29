@@ -10,6 +10,11 @@ library(ggplot2)
 library(patchwork)
 library(pracma)
 library(scales)
+library(zoo)
+
+
+# Working directory
+setwd("~/Documents/GitHub/GoldsteinGameTheory")
 
 mytheme <- theme_bw() +
   theme(axis.ticks.length = unit(.2, "cm")) +
@@ -37,9 +42,7 @@ mytheme <- theme_bw() +
     axis.text.y = element_text(margin = margin(0, 16, 0, 0))
   )
 
-theme_set(mytheme)
-
-
+#===================================== FIGURE 1 =============================================
 #================= Theory plots - Fitness landscapes - Optimum strategies ===================
 
 # Core Parameters
@@ -157,9 +160,11 @@ B <- ggplot(grid, aes(x=v, y=c, z=f_P_acute)) +
 C <- ggplot(grid, aes(x = v, y = c, z = joint_fitness_acute)) +
   geom_contour(aes(z = f_H_acute), bins = 10, color = "steelblue", alpha = 0.5) +
   geom_contour(aes(z = f_P_acute), bins = 10, color = "lightcoral", alpha = 0.5) +
-  geom_line(data = opt_c_ac, aes(x = v, y = c), color = "darkblue", inherit.aes = FALSE, size = 1) +
-  geom_line(data = opt_v_ac, aes(x = v, y = c), color = "firebrick", inherit.aes = FALSE, size = 1) +
-  geom_point(data = opt_joint_acute, aes(x = v, y = c), color = "black", size = 3, inherit.aes = FALSE) +
+  geom_vline(xintercept = 0.5278595, size = 1.5, color = "firebrick", linetype = "dashed") +
+  geom_hline(yintercept = 0.7773371, size = 1.5, color = "darkblue", linetype = "dashed") +
+  geom_line(data = opt_c_ac, aes(x = v, y = c), color = "steelblue", inherit.aes = FALSE, size = 2) +
+  geom_line(data = opt_v_ac, aes(x = v, y = c), color = "lightcoral", inherit.aes = FALSE, size = 2) +
+  geom_point(data = opt_joint_acute, aes(x = v, y = c), color = "grey20", size = 5, inherit.aes = FALSE) +
   labs(x = "v (virulence)", y = "c (clearance)") +
   coord_fixed(xlim = c(0,1), ylim = c(0,1), expand = FALSE) +
   scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
@@ -187,31 +192,21 @@ p <- (A1 | B1 | C1) +
 
 final_fig <- p + plot_annotation(tag_levels = "A")
 
-ggsave("figures/theory_figure.png", final_fig, width = 10, height = 4, units = "in")
-ggsave("figures/theory_figure.pdf", final_fig, width = 10, height = 4, units = "in")
+ggsave("figures/Figure1.png", final_fig, width = 10, height = 4, units = "in")
+ggsave("figures/Figure1.pdf", final_fig, width = 10, height = 4, units = "in")
 
-C2 <- ggplot(grid, aes(x = v, y = c, z = joint_fitness_acute)) +
-  geom_contour(aes(z = f_H_acute), bins = 10, color = "steelblue", alpha = 0.5) +
-  geom_contour(aes(z = f_P_acute), bins = 10, color = "lightcoral", alpha = 0.5) +
-  geom_vline(xintercept = 0.5278595, size = 1, color = "darkblue", linetype = "dashed") +
-  geom_hline(yintercept = 0.7773371, size = 1, color = "firebrick", linetype = "dashed") +
-  geom_line(data = opt_c_ac, aes(x = v, y = c), color = "darkblue", inherit.aes = FALSE, size = 1) +
-  geom_line(data = opt_v_ac, aes(x = v, y = c), color = "firebrick", inherit.aes = FALSE, size = 1) +
-  geom_point(data = opt_joint_acute, aes(x = v, y = c), color = "black", size = 3, inherit.aes = FALSE) +
-  labs(x = "v (virulence)", y = "c (clearance)") +
-  coord_fixed(xlim = c(0,1), ylim = c(0,1), expand = FALSE) +
-  scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
-  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1"))+
-  geom_point(data = opt_joint_acute, aes(x = v, y = c), color = "black", size = 3, inherit.aes = FALSE)
-
-ggsave("figures/optimum.png", C2, width = 4.2, height = 3.6, units = "in")
-ggsave("figures/optimum.pdf", C2, width = 4.2, height = 3.6, units = "in")
-
-
+#================================ FIGURE 2 =============================================
 #============= Multiple Nash equlibria and example for tree intersections ==============
 
-# Core parameters
-beta <- 1; d0 <- 0.1; mc <- 0.1; mv <- 1.0; epsilon <- 1e-4
+
+# Core parameters and functions
+# =============================
+
+beta <- 1
+d0 <- 0.1
+mc <- 0.1
+mv <- 1.0
+epsilon <- 1e-4
 
 clamp01 <- function(x) pmin(1, pmax(0, x))
 
@@ -230,7 +225,7 @@ pathFit <- function(v, s) {
   (v^beta) / (s + m)
 }
 
-# Gradient for weak Nash calculation
+# Gradient calculation for Nash equilibria
 grad <- function(f, v, s, h = 1e-5) {
   v1 <- clamp01(v - h); v2 <- clamp01(v + h)
   s1 <- clamp01(s - h); s2 <- clamp01(s + h)
@@ -239,54 +234,26 @@ grad <- function(f, v, s, h = 1e-5) {
   list(dv = dv, ds = ds)
 }
 
-# Build contour grid
+# Strategy line helpers
+host_line <- function(v, bS, mS) clamp01(bS + mS * v)
+path_line <- function(s, bV, mV) clamp01(bV + mV * s)
+
+# Build fitness landscape grid
+# =============================
+
 v_vals <- seq(0, 1, length.out = 300)
 s_vals <- seq(0, 1, length.out = 300)
 grid <- expand.grid(v = v_vals, s = s_vals)
 grid$fH <- mapply(hostFit, grid$v, grid$s)
 grid$fP <- mapply(pathFit, grid$v, grid$s)
 
+# High resolution for smooth strategy lines
 v_plot <- seq(0, 1, length.out = 900)
 s_plot <- seq(0, 1, length.out = 900)
 
-# ==== PANEL B: Multiple Nash Equilibria ====
+# Find ET (Evolved Trait) equilibrium - strong Nash
+# =================================================
 
-# 1. First weak Nash (filled circle)
-v_weak1 <- 0.33
-s_weak1 <- 0.62
-
-gH1 <- grad(hostFit, v_weak1, s_weak1)
-gP1 <- grad(pathFit, v_weak1, s_weak1)
-
-mS1 <- -gP1$dv / gP1$ds
-mV1 <- -gH1$ds / gH1$dv
-
-bS1 <- s_weak1 - mS1 * v_weak1
-bV1 <- v_weak1 - mV1 * s_weak1
-
-# Strategy lines for first weak Nash (dashed)
-B_host_line1 <- data.frame(v = v_plot, s = clamp01(bS1 + mS1 * v_plot))
-B_path_line1 <- data.frame(v = clamp01(bV1 + mV1 * s_plot), s = s_plot)
-
-# 2. Second weak Nash (gray/open circle) - different location
-# Try a point with different strategy slopes
-v_weak2 <- 0.42
-s_weak2 <- 0.70
-
-gH2 <- grad(hostFit, v_weak2, s_weak2)
-gP2 <- grad(pathFit, v_weak2, s_weak2)
-
-mS2 <- -gH2$dv / gP2$ds
-mV2 <- -gH2$ds / gH2$dv
-
-bS2 <- s_weak2 - mS2 * v_weak2
-bV2 <- v_weak2 - mV2 * s_weak2
-
-# Strategy lines for second weak Nash (dotted)
-B_host_line2 <- data.frame(v = v_plot, s = clamp01(bS2 + mS2 * v_plot))
-B_path_line2 <- data.frame(v = clamp01(bV2 + mV2 * s_plot), s = s_plot)
-
-# 3. Strong Nash (star)
 best_response_host <- function(v) {
   optimize(function(s) -hostFit(v, s), c(1e-6, 1-1e-6))$minimum
 }
@@ -301,128 +268,232 @@ s_grid <- seq(0.02, 0.98, length.out = 200)
 BR_host <- data.frame(v = v_grid, s = sapply(v_grid, best_response_host))
 BR_path <- data.frame(s = s_grid, v = sapply(s_grid, best_response_path))
 
+# Find intersection of best response curves
 distances <- expand.grid(i = 1:nrow(BR_host), j = 1:nrow(BR_path))
 distances$dist <- sqrt((BR_host$v[distances$i] - BR_path$v[distances$j])^2 + 
-                       (BR_host$s[distances$i] - BR_path$s[distances$j])^2)
+                         (BR_host$s[distances$i] - BR_path$s[distances$j])^2)
 closest <- distances[which.min(distances$dist), ]
-strong_nash <- data.frame(v = BR_host$v[closest$i], s = BR_host$s[closest$i])
+v_star <- BR_host$v[closest$i]
+s_star <- BR_host$s[closest$i]
 
-# Create points dataframe
-nash_points <- data.frame(
-  v = c(v_weak1, v_weak2, strong_nash$v),
-  s = c(s_weak1, s_weak2, strong_nash$s),
-  type = c("weak1", "weak2", "strong")
-)
+# Colors
+col_host <- "darkblue"  # Blue
+col_path <- "firebrick"  # Red/orange
 
-# Common axis theme for opposite-side ticks
-opposite_ticks <- theme(
-  axis.ticks.length = unit(3, "pt"),
-  axis.ticks.y.right = element_line(),
-  axis.ticks.x.top = element_line(),
-  axis.text.y.right = element_text(margin = margin(l = 4)),
-  axis.text.x.top = element_text(margin = margin(b = 4))
-)
+# Panel plotting function
+# ========================
 
-
-pB <- ggplot(grid, aes(v, s)) +
-  geom_contour(aes(z = fP), color = "lightcoral", bins = 10, linewidth = 0.3, alpha = 0.85) +
-  geom_contour(aes(z = fH), color = "steelblue", bins = 10, linewidth = 0.3, alpha = 0.85) +
-  # First weak Nash strategy lines (dashed)
-  geom_line(data = B_host_line1, aes(v, s), linetype = "dashed", linewidth = 1.0, color = "darkblue") +
-  geom_line(data = B_path_line1, aes(v, s), linetype = "dashed", linewidth = 1.0, color = "firebrick") +
-  # Second weak Nash strategy lines (dotted)
-  geom_line(data = B_host_line2, aes(v, s), linetype = "dotted", linewidth = 1.0, color = "darkblue") +
-  geom_line(data = B_path_line2, aes(v, s), linetype = "dotted", linewidth = 1.0, color = "firebrick") +
-  # Equilibrium points
-  geom_point(data = subset(nash_points, type == "weak1"), aes(x = v, y = s), 
-             size = 5, colour = "black") +  # Weak Nash 1 (filled)
-  geom_point(data = subset(nash_points, type == "weak2"), aes(x = v, y = s), 
-             size = 4, shape = 21, fill = "gray70", colour = "black", stroke = 1) +  # Weak Nash 2 (gray)
-  coord_fixed(xlim = c(0,1), ylim = c(0,1), expand = FALSE) +
-  labs(x = "v (virulence)", y = "c (clearance)") +
-  scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
-  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1"))+
-  mytheme+
-    scale_y_continuous(
-    breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1"),
-    sec.axis = dup_axis(name = NULL)  # mirror y ticks to right
-  ) +
-  scale_x_continuous(
-    breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1"),
-    sec.axis = dup_axis(name = NULL)  # mirror x ticks to top
-  ) +
-  labs(x = NULL, y = "c (clearance)") +  # no x title here
-  opposite_ticks
-
-# ==== PANEL C: Three intersections ====
-
-v_star <- 0.38
-s_star <- 0.60
-mS_C <- 2.6
-mV_C <- 2.2
-
-bS_C <- s_star - mS_C * v_star
-bV_C <- v_star - mV_C * s_star
-
-margin <- 1e-3
-if (bS_C > -margin) bS_C <- -margin
-if (bS_C + mS_C < 1 + margin) bS_C <- (1 + margin) - mS_C
-if (bV_C > -margin) bV_C <- -margin
-if (bV_C + mV_C < 1 + margin) bV_C <- (1 + margin) - mV_C
-
-C_host_line <- data.frame(v = v_plot, s = clamp01(bS_C + mS_C * v_plot))
-C_path_line <- data.frame(v = clamp01(bV_C + mV_C * s_plot), s = s_plot)
-
-C_interior <- data.frame(v = v_star, s = s_star)
-C_exterior <- data.frame(
-  v = c(0, 1),
-  s = c(clamp01(bS_C + mS_C * 0), clamp01(bS_C + mS_C * 1))
-)
-
-pC <- ggplot(grid, aes(v, s)) +
-  geom_contour(aes(z = fP), color = "lightcoral", bins = 10, linewidth = 0.3, alpha = 0.85) +
-  geom_contour(aes(z = fH), color = "steelblue", bins = 10, linewidth = 0.3, alpha = 0.85) +
-  geom_line(data = C_host_line, aes(v, s), linetype = "dashed", linewidth = 1.0, color = "darkblue") +
-  geom_line(data = C_path_line, aes(v, s), linetype = "dashed", linewidth = 1.0, color = "firebrick") +
-  geom_point(data = C_interior, aes(v, s), size = 4, shape = 21, fill = "gray70", colour = "black", stroke = 1) +  # Unstable (filled)
-  geom_point(data = C_exterior, aes(v, s), size = 5, fill = "black", colour = "black", stroke = 1) +  # Stable (open)
-  coord_fixed(xlim = c(0,1), ylim = c(0,1), expand = FALSE) +
-  labs(x = "v (virulence)", y = "c (clearance)") +
-  scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
-  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1"))+
-  mytheme
-
-
-strip_y <- function(p) {
-  p + labs(y = NULL) +
-    theme(axis.title.y = element_blank(),
-          axis.text.y  = element_blank(),
-          axis.ticks.y = element_blank())
+plot_panel <- function(bV, mV, bS, mS, v_int, s_int, 
+                       show_stable = TRUE, 
+                       boundary_points = NULL,
+                       show_yaxis = TRUE,
+                       show_best_response = TRUE) {
+  
+  # Create strategy line data
+  host_data <- data.frame(v = v_plot, s = host_line(v_plot, bS, mS))
+  path_data <- data.frame(v = path_line(s_plot, bV, mV), s = s_plot)
+  
+  # Base plot with fitness contours
+  p <- ggplot(grid, aes(v, s)) +
+    geom_contour(aes(z = fP), color = "lightcoral", bins = 10, 
+                 linewidth = 0.3, alpha = 0.7) +
+    geom_contour(aes(z = fH), color = "steelblue", bins = 10, 
+                 linewidth = 0.3, alpha = 0.7)
+  
+  # Add best response curves (optimal strategies)
+  if (show_best_response) {
+    p <- p +
+      geom_line(data = BR_host, aes(v, s), 
+                color = "lightcoral", linewidth = 2) +
+      geom_line(data = BR_path, aes(v, s), 
+                color = "steelblue", linewidth = 2)
+  }
+  
+  # Add strategy lines (dashed)
+  p <- p +
+    geom_line(data = host_data, aes(v, s), 
+              linetype = "dashed", linewidth = 1.5, color = col_host) +
+    geom_line(data = path_data, aes(v, s), 
+              linetype = "dashed", linewidth = 1.5, color = col_path) +
+    coord_fixed(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE) +
+    scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+    scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+    labs(x = "v (virulence)") +
+    mytheme
+  
+  # Y-axis handling
+  if (show_yaxis) {
+    p <- p + labs(y = "c (clearance)")
+  } else {
+    p <- p + labs(y = NULL) +
+      theme(axis.text.y = element_blank(),
+            axis.ticks.y = element_blank())
+  }
+  
+  # Add equilibrium points
+  if (show_stable) {
+    # Stable equilibrium - filled black circle
+    p <- p + geom_point(aes(x = v_int, y = s_int), 
+                        size = 5, colour = "black")
+  } else {
+    # Unstable equilibrium - gray filled circle
+    p <- p + geom_point(aes(x = v_int, y = s_int), 
+                        size = 5, shape = 21, 
+                        fill = "gray70", colour = "black", stroke = 1)
+  }
+  
+  # Add boundary equilibria if provided
+  if (!is.null(boundary_points)) {
+    p <- p + geom_point(data = boundary_points, aes(x = v, y = s),
+                        size = 5, colour = "black")
+  }
+  
+  return(p)
 }
 
-A2 <- pB + labs(x = "v (virulence)", y = "c (clearance)")
-B2 <- strip_y(pC) + labs(x = "v (virulence)")
+# PANEL A: ET equilibrium (mS = mV = 0)
+# =====================================
 
-p2 <- (A2 | B2) +
-  plot_layout(guides = "collect") &
+cat("\nGenerating Panel A: ET equilibrium...\n")
+bS_A <- s_star  # Fixed at s*
+mS_A <- 0.0
+bV_A <- v_star  # Fixed at v*
+mV_A <- 0.0
+
+pA <- plot_panel(bV_A, mV_A, bS_A, mS_A, v_star, s_star,
+                 show_stable = TRUE, show_yaxis = TRUE)
+
+
+# PANEL B: Host slope varies, point conserved
+# ============================================
+
+# Host develops positive responsiveness
+mS_B <- 0.5
+bS_B <- s_star - mS_B * v_star  # Adjust intercept to maintain point
+bV_B <- v_star  # Pathogen still fixed
+mV_B <- 0.0
+
+pB <- plot_panel(bV_B, mV_B, bS_B, mS_B, v_star, s_star,
+                 show_stable = TRUE, show_yaxis = FALSE)
+
+
+# PANEL C: Pathogen slope varies, point conserved
+# ===============================================
+
+bS_C <- s_star  # Host still fixed
+mS_C <- 0.0
+mV_C <- 0.8  # Pathogen develops positive responsiveness
+bV_C <- v_star - mV_C * s_star  # Adjust intercept to maintain point
+
+pC <- plot_panel(bV_C, mV_C, bS_C, mS_C, v_star, s_star,
+                 show_stable = TRUE, show_yaxis = FALSE)
+
+# PANEL D: Large slopes, destabilization (|mS * mV| > 1)
+# ======================================================
+
+# Both slopes large, creating instability
+mS_D <- 2.5
+mV_D <- 2.5
+bS_D <- s_star - mS_D * v_star
+bV_D <- v_star - mV_D * s_star
+
+# Adjust intercepts to force boundary behavior
+margin <- 1e-3
+if (bS_D > -margin) bS_D <- -margin
+if (bS_D + mS_D < 1 + margin) bS_D <- (1 + margin) - mS_D
+if (bV_D > -margin) bV_D <- -margin
+if (bV_D + mV_D < 1 + margin) bV_D <- (1 + margin) - mV_D
+
+# Find interior intersection (unstable)
+v_int_D <- v_star
+s_int_D <- s_star
+
+# Boundary equilibria (stable attractors)
+boundary_D <- data.frame(
+  v = c(clamp01(bV_D), clamp01(bV_D + mV_D)),
+  s = c(clamp01(bS_D), clamp01(bS_D + mS_D))
+)
+
+pD <- plot_panel(bV_D, mV_D, bS_D, mS_D, v_int_D, s_int_D,
+                 show_stable = FALSE, 
+                 boundary_points = boundary_D,
+                 show_yaxis = FALSE)
+
+# Combine panels and save
+# =======================
+
+final_fig_2 <- (pA | pB | pC | pD) +
+  plot_annotation(
+    tag_levels = "A"
+  ) +
+  plot_layout(widths = c(1, 1, 1, 1)) &  # Note the & instead of +
   theme(
-    plot.tag = element_text(face = "bold"),
-    legend.position = "right",
-    text = element_text(size = 14)
+    plot.tag = element_text(face = "bold", size = 16),
+    plot.tag.position = c(-0.01, 0.76)  # (x, y) on 0-1 scale
   )
 
-final_fig2 <- p2 + plot_annotation(tag_levels = "A")  
+ggsave("figures/Figure2.png", final_fig_2, width = 9, height = 6, units = "in")
+ggsave("figures/Figure2.pdf", final_fig_2, width = 9, height = 6, units = "in")
 
-ggsave("figures/nash_figure5.png", final_fig2, width = 9, height = 4, units = "in")
-ggsave("figures/nash_figure5.pdf", final_fig2, width = 9, height = 4, units = "in")
+# Print stability conditions
+cat("\n" %+% strrep("=", 70) %+% "\n")
+cat("Stability conditions:\n")
+cat(sprintf("Panel A: mS=%.2f, mV=%.2f, |mS*mV|=%.2f (stable)\n", 
+            mS_A, mV_A, abs(mS_A * mV_A)))
+cat(sprintf("Panel B: mS=%.2f, mV=%.2f, |mS*mV|=%.2f (stable)\n", 
+            mS_B, mV_B, abs(mS_B * mV_B)))
+cat(sprintf("Panel C: mS=%.2f, mV=%.2f, |mS*mV|=%.2f (stable)\n", 
+            mS_C, mV_C, abs(mS_C * mV_C)))
+cat(sprintf("Panel D: mS=%.2f, mV=%.2f, |mS*mV|=%.2f (UNSTABLE, >1)\n", 
+            mS_D, mV_D, abs(mS_D * mV_D)))
+cat(strrep("=", 70) %+% "\n")
 
-#================================== Simulation results ==========================================
+# Create standalone legend
+# =========================
+
+legend_data <- data.frame(
+  x = c(0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2, 0.2),
+  y = c(0.95, 0.85, 0.75, 0.65, 0.55, 0.45, 0.35, 0.25),
+  label = c(
+    "Host response rule: c = bc + mc v",
+    "Pathogen response rule: v = bv + mv c",
+    "Host best response (optimal c given v)",
+    "Pathogen best response (optimal v given c)",
+    "Host fitness contours",
+    "Pathogen fitness contours",
+    "Stable equilibrium",
+    "Unstable equilibrium"
+  )
+)
+
+p_legend <- ggplot(legend_data, aes(x, y)) +
+  # Strategy lines (dashed)
+  annotate("segment", x = 0.05, xend = 0.15, y = 0.95, yend = 0.95,
+           linetype = "dashed", linewidth = 1.2, color = col_host) +
+  annotate("segment", x = 0.05, xend = 0.15, y = 0.85, yend = 0.85,
+           linetype = "dashed", linewidth = 1.2, color = col_path) +
+  # Best response curves (solid)
+  annotate("segment", x = 0.05, xend = 0.15, y = 0.75, yend = 0.75,
+           linetype = "solid", linewidth = 0.8, color = col_host, alpha = 0.9) +
+  annotate("segment", x = 0.05, xend = 0.15, y = 0.65, yend = 0.65,
+           linetype = "solid", linewidth = 0.8, color = col_path, alpha = 0.9) +
+  # Contours
+  annotate("segment", x = 0.05, xend = 0.15, y = 0.55, yend = 0.55,
+           linewidth = 0.5, color = col_host, alpha = 0.7) +
+  annotate("segment", x = 0.05, xend = 0.15, y = 0.45, yend = 0.45,
+           linewidth = 0.5, color = col_path, alpha = 0.7) +
+  # Points
+  annotate("point", x = 0.1, y = 0.35, size = 3, color = "black") +
+  annotate("point", x = 0.1, y = 0.25, size = 3, shape = 21, 
+           fill = "gray70", color = "black", stroke = 1) +
+  # Labels
+  geom_text(aes(label = label), hjust = 0, nudge_x = 0.03, size = 3.5) +
+  xlim(0, 1) + ylim(0, 1) +
+  theme_void()
+
+#=============================== FIGURE 3 ======================================================
+#============================Simulation results ================================================
 ## Trait Evolution, fitness over time, relative substitution rates
-
-# Working directory
-setwd("~/Documents/GitHub/GoldsteinGameTheory")
-
-library(zoo)
 
 # ---------- Omega spike panel using actual CSV omega columns ----------
 omega_spike_panel <- function(df, who = c("Path", "Host"),
@@ -504,16 +575,16 @@ thin_for_plot <- function(df_post, every = 100) {
     filter(.row %% every == 0)
 }
 
-# ---------- Build Figure 1 with CORRECTED omega panels ----------
+# ---------- Build Figure 3 with omega panels ----------
 # Load your data
 ei_acute <- read.csv("results/ei_simulation.csv")
 es_acute <- read.csv("results/es_simulation.csv")
 
-ei_post2 <- ei_acute %>% filter(event == "post")
-es_post2 <- es_acute %>% filter(event == "post")
+ei_post2 <- ei_acute %>% filter(event == "post", gen > 10000)
+es_post2 <- es_acute %>% filter(event == "post", gen > 10000)
 
-ei_thin <- thin_for_plot(ei_post2, every = 100)
-es_thin <- thin_for_plot(es_post2, every = 100)
+ei_thin <- thin_for_plot(ei_post2, every = 1000)
+es_thin <- thin_for_plot(es_post2, every = 1000)
 
 
 # ---------- LOG VERSION (original manuscript style) ----------
@@ -621,13 +692,7 @@ final_plot_log <- (
     plot.tag = element_text(face = "bold", size = 12)
   )
 
-print(final_plot_log)
-
-
 # ---------- Summary statistics (for paper) ----------
-cat("\n=== SUMMARY STATISTICS ===\n\n")
-
-cat("EI Mode:\n")
 ei_post2 %>%
   summarise(
     omega_P_median = median(omegaPath),
@@ -638,8 +703,6 @@ ei_post2 %>%
     fp_median = median(pathFit)
   ) %>% print()
 
-
-cat("\nES Mode:\n")
 es_post2 %>%
   summarise(
     omega_P_median = median(omegaPath),
@@ -650,17 +713,17 @@ es_post2 %>%
     fp_median = median(pathFit)
   ) %>% print()
 
-ggsave("figures/simulation.png", final_plot_log, width = 9, height = 9, units = "in")
-ggsave("figures/simulation.pdf", final_plot_log, width = 9, height = 9, units = "in")
+ggsave("figures/Figure3.png", final_plot_log, width = 9, height = 9, units = "in")
+ggsave("figures/Figure3.pdf", final_plot_log, width = 9, height = 9, units = "in")
 
 # Supplementary figures
 
 # ---------- LINEAR X settings ----------
 library(scales)
 
-X_LIMS_LIN   <- c(0, 1e6)
-X_BREAKS_LIN <- c(0, 2e5, 4e5, 6e5, 8e5, 1e6)
-X_LABS_LIN   <- label_number(accuracy = 1, big.mark = ",")
+X_LIMS_LIN   <- c(1e4, 1e6)
+X_BREAKS_LIN <- c(10000, 505000, 1e6)
+X_LABS_LIN   <- c("10K", "505K", "1M")
 
 # Zoom window: 500k - 1M
 X_LIMS_ZOOM   <- c(5e5, 1e6)
@@ -741,22 +804,22 @@ omega_panel_linear <- function(df, who = c("Path", "Host"),
 }
 
 # ---------- Assemble: linear FULL (0–1e6) ----------
-pA_lin <- make_line_linear(ei_post2, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(v)))
-pC_lin <- make_line_linear(ei_post2, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(c)))
-pE_lin <- make_line_linear(ei_post2, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(F)[P]))
-pG_lin <- make_line_linear(ei_post2, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(F)[H]))
-pI_lin <- omega_panel_linear(ei_post2, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+pA_lin <- make_line_linear(ei_thin, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(v)))
+pC_lin <- make_line_linear(ei_thin, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(c)))
+pE_lin <- make_line_linear(ei_thin, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(F)[P]))
+pG_lin <- make_line_linear(ei_thin, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(F)[H]))
+pI_lin <- omega_panel_linear(ei_thin, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
                              ylab = expression(omega[P]))
-pK_lin <- omega_panel_linear(ei_post2, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+pK_lin <- omega_panel_linear(ei_thin, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
                              ylab = expression(omega[H]), show_xlab = TRUE)
 
-pB_lin <- make_line_linear(es_post2, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
-pD_lin <- make_line_linear(es_post2, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
-pF_lin <- make_line_linear(es_post2, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
-pH_lin <- make_line_linear(es_post2, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
-pJ_lin <- omega_panel_linear(es_post2, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+pB_lin <- make_line_linear(es_thin, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pD_lin <- make_line_linear(es_thin, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pF_lin <- make_line_linear(es_thin, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pH_lin <- make_line_linear(es_thin, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pJ_lin <- omega_panel_linear(es_thin, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
                              show_ylab = FALSE)
-pL_lin <- omega_panel_linear(es_post2, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+pL_lin <- omega_panel_linear(es_thin, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
                              show_ylab = FALSE, show_xlab = TRUE)
 
 final_plot_linear_full <- (
@@ -770,25 +833,23 @@ final_plot_linear_full <- (
   theme(plot.tag.position = "topleft",
         plot.tag = element_text(face = "bold", size = 12))
 
-print(final_plot_linear_full)
-
 # ---------- Assemble: linear ZOOM (500k–1M) ----------
-pA_z <- make_line_linear(ei_post2, y = v,       X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, ylab = expression(italic(v)))
-pC_z <- make_line_linear(ei_post2, y = s,       X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, ylab = expression(italic(c)))
-pE_z <- make_line_linear(ei_post2, y = pathFit, X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, ylab = expression(italic(F)[P]))
-pG_z <- make_line_linear(ei_post2, y = hostFit, X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, ylab = expression(italic(F)[H]))
-pI_z <- omega_panel_linear(ei_post2, "Path", x_lims = X_LIMS_ZOOM, x_breaks = X_BREAKS_ZOOM, x_labels = X_LABS_ZOOM,
+pA_z <- make_line_linear(ei_thin, y = v,       X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, ylab = expression(italic(v)))
+pC_z <- make_line_linear(ei_thin, y = s,       X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, ylab = expression(italic(c)))
+pE_z <- make_line_linear(ei_thin, y = pathFit, X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, ylab = expression(italic(F)[P]))
+pG_z <- make_line_linear(ei_thin, y = hostFit, X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, ylab = expression(italic(F)[H]))
+pI_z <- omega_panel_linear(ei_thin, "Path", x_lims = X_LIMS_ZOOM, x_breaks = X_BREAKS_ZOOM, x_labels = X_LABS_ZOOM,
                            ylab = expression(omega[P]))
-pK_z <- omega_panel_linear(ei_post2, "Host", x_lims = X_LIMS_ZOOM, x_breaks = X_BREAKS_ZOOM, x_labels = X_LABS_ZOOM,
+pK_z <- omega_panel_linear(ei_thin, "Host", x_lims = X_LIMS_ZOOM, x_breaks = X_BREAKS_ZOOM, x_labels = X_LABS_ZOOM,
                            ylab = expression(omega[H]), show_xlab = TRUE)
 
-pB_z <- make_line_linear(es_post2, y = v,       X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, show_ylab = FALSE)
-pD_z <- make_line_linear(es_post2, y = s,       X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, show_ylab = FALSE)
-pF_z <- make_line_linear(es_post2, y = pathFit, X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, show_ylab = FALSE)
-pH_z <- make_line_linear(es_post2, y = hostFit, X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, show_ylab = FALSE)
-pJ_z <- omega_panel_linear(es_post2, "Path", x_lims = X_LIMS_ZOOM, x_breaks = X_BREAKS_ZOOM, x_labels = X_LABS_ZOOM,
+pB_z <- make_line_linear(es_thin, y = v,       X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, show_ylab = FALSE)
+pD_z <- make_line_linear(es_thin, y = s,       X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, show_ylab = FALSE)
+pF_z <- make_line_linear(es_thin, y = pathFit, X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, show_ylab = FALSE)
+pH_z <- make_line_linear(es_thin, y = hostFit, X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, show_ylab = FALSE)
+pJ_z <- omega_panel_linear(es_thin, "Path", x_lims = X_LIMS_ZOOM, x_breaks = X_BREAKS_ZOOM, x_labels = X_LABS_ZOOM,
                            show_ylab = FALSE)
-pL_z <- omega_panel_linear(es_post2, "Host", x_lims = X_LIMS_ZOOM, x_breaks = X_BREAKS_ZOOM, x_labels = X_LABS_ZOOM,
+pL_z <- omega_panel_linear(es_thin, "Host", x_lims = X_LIMS_ZOOM, x_breaks = X_BREAKS_ZOOM, x_labels = X_LABS_ZOOM,
                            show_ylab = FALSE, show_xlab = TRUE)
 
 final_plot_linear_zoom <- (
@@ -802,7 +863,6 @@ final_plot_linear_zoom <- (
   theme(plot.tag.position = "topleft",
         plot.tag = element_text(face = "bold", size = 12))
 
-print(final_plot_linear_zoom)
 
 #============================== Distribution plots ====================================
 
@@ -879,10 +939,8 @@ p3 <- (a_with_inset | b_plot) +
 
 distribution_fig <- p3 + plot_annotation(tag_levels = "A")
 
-
 ggsave("figures/distribution.png", distribution_fig, width = 7, height = 3.5, units = "in")
 ggsave("figures/distribution.pdf", distribution_fig, width = 7, height = 3.5, units = "in")
-
 
 #===================================== Dwell times =====================================
 
@@ -1122,8 +1180,8 @@ make_snapshot_panel <- function(gen_num,
 }
 
 # Choose snapshots
-snapshots <- c(100, 1000, 10000, 100000, 500000, 990000)
-labels <- c("100 gen.", "1K gen.", "10K gen.", "100K gen.", "500K gen.", "990K gen.")
+snapshots <- c(20000, 50000, 100000, 200000, 500000, 999000)
+labels <- c("20K gen.", "50K gen.", "100K gen.", "200K gen.", "500K gen.", "1M gen.")
 
 # Create panels with conditional axis labels
 panels <- list()
@@ -1145,14 +1203,12 @@ for (i in 1:6) {
 }
 
 # Combine
-fig6 <- (panels[[1]] | panels[[2]] | panels[[3]]) /
+snapshot_figure <- (panels[[1]] | panels[[2]] | panels[[3]]) /
   (panels[[4]] + xlab(NULL) + ylab(NULL) | panels[[5]] | panels[[6]] + xlab(NULL))
 
-print(fig6)
+ggsave("figures/Snapshots.png", snapshot_figure, width = 8, height = 6, units = "in")
+ggsave("figures/Snapshots.pdf", snapshot_figure, width = 8, height = 6, units = "in")
 
-ggsave("figures/fig6.png", fig6, width = 8, height = 6, units = "in")
-ggsave("figures/fig6.pdf", fig6, width = 8, height = 6, units = "in")
-```
 
 #=========================== Nash Regions and Occupancy ==================================
 
@@ -1364,7 +1420,7 @@ pC <- ggplot() +
   scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1"))
 
 # Combine all three
-fig7_full <- pA_violations + pB + pC + 
+nash_ocupancy <- pA_violations + pB + pC + 
   plot_layout(guides = "collect") +
   plot_annotation(tag_levels = "A") &
   theme(
@@ -1373,8 +1429,426 @@ fig7_full <- pA_violations + pB + pC +
     text = element_text(size = 14)
   )
 
-print(fig7_full)
+ggsave("figures/nash_ocupancy.png", nash_ocupancy, width = 8, height = 4, units = "in")
+ggsave("figures/nash_ocupancy..pdf", nash_ocupancy, width = 8, height = 4, units = "in")
 
-ggsave("figures/fig7.png", fig7_full, width = 8, height = 4, units = "in")
-ggsave("figures/fig7.pdf", fig6, width = 8, height = 4, units = "in")
+#==================== Stability analysis ==============================================
+
+# --- Plot 1: Host Strategy Parameters ---
+# Thinned data!!!
+
+# Host intercept (bS)
+p_bS <- ggplot(es_thin, aes(x = gen, y = bS)) +
+  geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    x = "Generation",
+    y = "Host strategy intercept"
+  ) +
+  mytheme
+
+# Host slope (mS)
+p_mS <- ggplot(es_thin, aes(x = gen, y = mS)) +
+  geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    x = "Generation",
+    y = "Host strategy slope"
+  ) +
+  mytheme
+
+# --- Plot 2: Pathogen Strategy Parameters ---
+
+# Pathogen intercept (bV)
+p_bV <- ggplot(es_thin, aes(x = gen, y = bV)) +
+  geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    x = "Generation",
+    y = "Pathogen strategy intercept"
+  ) +
+  mytheme
+
+# Pathogen slope (mV)
+p_mV <- ggplot(es_thin, aes(x = gen, y = mV)) +
+  geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    x = "Generation",
+    y = "Pathogen strategy slope"
+  ) +
+  mytheme
+
+# --- Combine plots ---
+combined_plot <- (p_bS | p_mS) / (p_bV | p_mV) +
+  plot_annotation(
+    tag_levels = "A"
+  ) +
+  plot_layout(widths = c(1, 1, 1, 1)) & 
+  theme(
+    plot.tag = element_text(face = "bold", size = 16)
+  )
+
+# Save plot
+ggsave("strategy_parameters_evolution.pdf", combined_plot, width = 7.5, height = 9)
+
+# --- Additional: Plot product mS * mV (stability criterion) ---
+
+p_product <- es_post2 %>%
+  mutate(product = mS * mV) %>%
+  ggplot(aes(x = gen, y = product)) +
+  geom_line(alpha = 0.7, linewidth = 0.5) +
+  geom_hline(yintercept = c(-1, 1), linetype = "dashed", color = "firebrick") +
+  geom_hline(yintercept = 0, linetype = "dotted", color = "gray50") +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  annotate("rect", xmin = 1e4, xmax = 1e6, ymin = -1, ymax = 1,
+           alpha = 0.1, fill = "green") +
+  annotate("text", x = 1e5, y = 0.5, 
+           label = "Stable region\n(|mS·mV| < 1)", 
+           size = 6, color = "darkgreen") +
+  labs(
+    title = "Stability Criterion: Product of Strategy Slopes",
+    x = "Generation",
+    y = expression(m[S] %.% m[V])
+  ) +
+  mytheme
+
+ggsave("strategy_stability_product.pdf", p_product, width = 6.5, height = 5.5)
+
+# --- Phase plot: mS vs mV ---
+p_phase <- ggplot(es_post2, aes(x = mV, y = mS)) +
+  geom_density_2d_filled(alpha = 0.7) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "white") +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "white") +
+  # Add stability boundaries (hyperbolas: mS*mV = ±1)
+  stat_function(fun = function(x) 1/x, 
+                xlim = c(0.01, 10), 
+                color = "red", linetype = "dashed", linewidth = 0.8) +
+  stat_function(fun = function(x) -1/x, 
+                xlim = c(0.01, 10), 
+                color = "red", linetype = "dashed", linewidth = 0.8) +
+  stat_function(fun = function(x) 1/x, 
+                xlim = c(-10, -0.01), 
+                color = "red", linetype = "dashed", linewidth = 0.8) +
+  stat_function(fun = function(x) -1/x, 
+                xlim = c(-10, -0.01), 
+                color = "red", linetype = "dashed", linewidth = 0.8) +
+  coord_cartesian(xlim = c(-5, 5), ylim = c(-5, 5)) +
+  labs(
+    title = "Phase Space: Strategy Slopes",
+    subtitle = "Red lines show stability boundaries (mS·mV = ±1)",
+    x = expression(m[V]~"(Pathogen slope)"),
+    y = expression(m[S]~"(Host slope)")
+  ) +
+  mytheme +
+  theme(legend.position = "none")
+
+print(p_phase)
+
+ggsave("strategy_phase_space.pdf", 
+       p_phase, 
+       width = 8, height = 8)
+
+
+
+# Filter to interior equilibria (away from boundaries)
+# ============================================================================
+# When equilibria are at boundaries (v=0,1 or s=0,1), intercepts/slopes
+# become ill-defined (many combinations pass through boundary points)
+
+es_interior <- es_post2 %>%
+  filter(v > 0.05, v < 0.95, s > 0.05, s < 0.95)
+
+# Cap extreme slopes at biologically meaningful limits
+# ============================================================================
+# Very large slopes (>10 or <-10) all function similarly due to clamping
+# The distinction between mS=-100 and mS=-1000 doesn't matter biologically
+
+es_capped <- es_post2 %>%
+  mutate(
+    mS_capped = pmin(pmax(mS, -10), 10),
+    mV_capped = pmin(pmax(mV, -10), 10),
+    bS_capped = pmin(pmax(bS, -5), 5),
+    bV_capped = pmin(pmax(bV, -5), 5)
+  )
+
+# Thin data for plotting
+es_interior_thin <- es_interior %>%
+  mutate(row_num = row_number()) %>%
+  filter(row_num %% 10 == 0)
+
+es_capped_thin <- es_capped %>%
+  mutate(row_num = row_number()) %>%
+  filter(row_num %% 10 == 0)
+
+
+# Interior equilibria only 
+# ============================================================================
+
+p1_bS <- ggplot(es_interior_thin, aes(x = gen, y = bS)) +
+  geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    x = "Generation",
+    y = "Host intercept"
+  ) +
+  mytheme
+
+p1_mS <- ggplot(es_interior_thin, aes(x = gen, y = mS)) +
+  geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    x = "Generation",
+    y = "Host slope"
+  ) +
+  mytheme
+
+p1_bV <- ggplot(es_interior_thin, aes(x = gen, y = bV)) +
+  geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    x = "Generation",
+    y = "Pathogen intercept"
+  ) +
+  mytheme
+
+p1_mV <- ggplot(es_interior_thin, aes(x = gen, y = mV)) +
+  geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    x = "Generation",
+    y = "Pathogen slope"
+  ) +
+  mytheme
+
+plot1 <- (p1_bS | p1_mS) / (p1_bV | p1_mV) +
+  plot_annotation(
+    title = "Strategy Parameters: Interior Equilibria Only",
+    subtitle = "Filtered to 0.05 < v,s < 0.95 to exclude boundary artifacts",
+    tag_levels = "A"
+  )+
+  plot_layout(widths = c(1, 1, 1, 1)) & 
+  theme(
+    plot.tag = element_text(face = "bold", size = 16)
+  )
+
+# Save plot
+ggsave("strategy_parameters_evolution.pdf", plot1, width = 7.5, height = 9)
+
+# ============================================================================
+# PLOT SET 2: All data with capped values (shows boundary behavior)
+# ============================================================================
+
+p2_bS <- ggplot(es_capped_thin, aes(x = gen, y = bS_capped)) +
+  geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    x = "Generation",
+    y = "Host Intercept (capped ±5)"
+  ) +
+  mytheme
+
+p2_mS <- ggplot(es_capped_thin, aes(x = gen, y = mS_capped)) +
+  geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_hline(yintercept = c(-10, 10), linetype = "dotted", color = "firebrick", alpha = 0.5) +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    x = "Generation",
+    y = "Host Slope (capped ±10)"
+  ) +
+  mytheme
+
+p2_bV <- ggplot(es_capped_thin, aes(x = gen, y = bV_capped)) +
+  geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    x = "Generation",
+    y = "Pathogen Intercept (capped ±5)"
+  ) +
+  mytheme
+
+p2_mV <- ggplot(es_capped_thin, aes(x = gen, y = mV_capped)) +
+  geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  geom_hline(yintercept = c(-10, 10), linetype = "dotted", color = "firebrick", alpha = 0.5) +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
+  labs(
+    x = "Generation",
+    y = "Pathogen Slope (capped ±10)"
+  ) +
+  mytheme
+
+plot2 <- (p2_bS | p2_mS) / (p2_bV | p2_mV) +
+  plot_annotation(
+    tag_levels = "A"
+  )+
+  plot_layout(widths = c(1, 1, 1, 1)) & 
+  theme(
+    plot.tag = element_text(face = "bold", size = 16)
+  )
+
+ggsave("figures/strategy_params_capped.pdf", plot2, width = 12, height = 8)
+
+# ============================================================================
+# PLOT 3: Stability product (mS × mV) - most important!
+# ============================================================================
+
+es_stability <- es_post2 %>%
+  mutate(
+    product = mS * mV,
+    product_capped = pmin(pmax(product, -5), 5),
+    stable = abs(product) < 1,
+    at_boundary = (v < 0.05 | v > 0.95 | s < 0.05 | s > 0.95)
+  )
+
+es_stability_thin <- es_stability %>%
+  mutate(row_num = row_number()) %>%
+  filter(row_num %% 10 == 0)
+
+p_stab <- ggplot(es_stability_thin, aes(x = gen, y = product_capped)) +
+  geom_line(aes(color = stable), alpha = 0.7, linewidth = 0.5) +
+  geom_hline(yintercept = c(-1, 1), linetype = "dashed", color = "firebrick", linewidth = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dotted", color = "gray50") +
+  annotate("rect", xmin = 1e4, xmax = 1e6, ymin = -1, ymax = 1,
+           alpha = 0.05, fill = "green") +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6)) +
+  scale_color_manual(
+    values = c("TRUE" = "darkgreen", "FALSE" = "darkred"),
+    labels = c("TRUE" = "Stable (|mS·mV| < 1)", 
+               "FALSE" = "Unstable (|mS·mV| ≥ 1)")
+  ) +
+  labs(
+    title = "Stability Criterion: mS × mV Product",
+    subtitle = "Values capped at ±5 for visualization",
+    x = "Generation",
+    y = expression(m[S] %.% m[V]~"(capped)"),
+    color = "Stability"
+  ) +
+  mytheme +
+  theme(legend.position = c(0.25, 0.85),
+        legend.background = element_rect(fill = "white", color = "black"))
+
+ggsave("figures/strategy_stability.pdf", p_stab, width = 7, height = 6)
+
+# ============================================================================
+# PLOT 4: Phase space (mS vs mV)
+# ============================================================================
+#Phase Space: Strategy Slopes (Interior Equilibria)",
+#"Red hyperbolas: stability boundaries (mS·mV = ±1)
+
+p_phase_interior <- ggplot(es_interior, aes(x = mV, y = mS)) +
+  geom_density_2d_filled(alpha = 0.7, bins = 15) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "white", linewidth = 0.8) +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "white", linewidth = 0.8) +
+  # Stability boundaries: mS*mV = ±1
+  geom_function(fun = function(x) 1/x, xlim = c(0.1, 10), 
+                color = "firebrick", linetype = "dashed", linewidth = 1) +
+  geom_function(fun = function(x) -1/x, xlim = c(0.1, 10), 
+                color = "firebrick", linetype = "dashed", linewidth = 1) +
+  geom_function(fun = function(x) 1/x, xlim = c(-10, -0.1), 
+                color = "firebrick", linetype = "dashed", linewidth = 1) +
+  geom_function(fun = function(x) -1/x, xlim = c(-10, -0.1), 
+                color = "firebrick", linetype = "dashed", linewidth = 1) +
+  coord_cartesian(xlim = c(-8, 8), ylim = c(-8, 8)) +
+  labs(
+    x = expression(m[V]~"(Pathogen slope)"),
+    y = expression(m[S]~"(Host slope)")
+  ) +
+  mytheme +
+  theme(legend.position = "none")
+
+ggsave("figures/strategy_phase_interior.pdf", p_phase_interior, width = 8, height = 8)
+
+# ============================================================================
+# PLOT 5: Distinguish boundary vs interior over time
+# ============================================================================
+
+boundary_summary <- es_stability %>%
+  mutate(time_bin = cut(gen, breaks = seq(0, 1e6, by = 1e4))) %>%
+  group_by(time_bin) %>%
+  summarise(
+    gen_mid = mean(gen),
+    frac_boundary = mean(at_boundary),
+    frac_stable = mean(stable),
+    mean_v = mean(v),
+    mean_s = mean(s),
+    .groups = "drop"
+  ) %>%
+  filter(!is.na(time_bin))
+
+p_boundary <- ggplot(boundary_summary, aes(x = gen_mid)) +
+  geom_line(aes(y = frac_boundary, color = "At boundary"), linewidth = 1) +
+  geom_line(aes(y = frac_stable, color = "Stable"), linewidth = 1) +
+  scale_x_log10(breaks = c(1e4, 1e5, 1e6)) +
+  scale_y_continuous(limits = c(0, 1), breaks = seq(0, 1, 0.2)) +
+  scale_color_manual(
+    values = c("At boundary" = "purple", "Stable" = "darkgreen")
+  ) +
+  labs(
+    title = "Fraction of Time at Boundaries vs in Stable Region",
+    x = "Generation",
+    y = "Fraction",
+    color = "State"
+  ) +
+  mytheme +
+  theme(legend.position = c(0.2, 0.8))
+
+print(p_boundary)
+ggsave("figures/boundary_vs_stable.pdf", p_boundary, width = 10, height = 6)
+
+
+# SUMMARY STATISTICS
+# ============================================================================
+
+cat("Overall:\n")
+cat("  Fraction at boundaries:", 
+    round(mean(es_stability$at_boundary), 3), "\n")
+cat("  Fraction stable:", 
+    round(mean(es_stability$stable), 3), "\n")
+cat("  Fraction stable & interior:", 
+    round(mean(es_stability$stable & !es_stability$at_boundary), 3), "\n\n")
+
+cat("Interior equilibria statistics:\n")
+es_interior %>%
+  summarise(
+    mean_bS = mean(bS),
+    sd_bS = sd(bS),
+    mean_mS = mean(mS),
+    sd_mS = sd(mS),
+    mean_bV = mean(bV),
+    sd_bV = sd(bV),
+    mean_mV = mean(mV),
+    sd_mV = sd(mV),
+    mean_product = mean(mS * mV),
+    frac_stable = mean(abs(mS * mV) < 1)
+  ) %>%
+  print()
+
+es_interior %>%
+  mutate(period = cut(gen, 
+                      breaks = c(1e4, 2e5, 5e5, 1e6),
+                      labels = c("Early", "Middle", "Late"))) %>%
+  group_by(period) %>%
+  summarise(
+    n = n(),
+    mean_mS = mean(mS),
+    mean_mV = mean(mV),
+    mean_product = mean(mS * mV),
+    frac_stable = mean(abs(mS * mV) < 1),
+    .groups = "drop"
+  ) %>%
+
+
+cat("• Positive mS: Host increases immunity when facing higher virulence\n")
+cat("• Negative mS: Host decreases immunity when facing higher virulence (paradoxical)\n")
+cat("• Positive mV: Pathogen increases virulence when facing higher immunity (escalation)\n")
+cat("• Negative mV: Pathogen decreases virulence when facing higher immunity (restraint)\n")
+cat("• Stable: |mS × mV| < 1 (system converges to fixed point)\n")
+cat("• Unstable: |mS × mV| ≥ 1 (oscillations or bistability)\n")
+
 
