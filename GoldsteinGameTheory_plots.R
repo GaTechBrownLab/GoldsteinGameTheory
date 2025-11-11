@@ -42,6 +42,7 @@ mytheme <- theme_bw() +
     axis.text.y = element_text(margin = margin(0, 16, 0, 0))
   )
 
+set_theme(mytheme)
 #===================================== FIGURE 1 =============================================
 #================= Theory plots - Fitness landscapes - Optimum strategies ===================
 
@@ -76,6 +77,20 @@ f_P_acute <- function(c, v) {
   r <- r_acute(v)
   r / (d + c)
 }
+
+#-----------------------------------------
+# FOR MINIMAL FITNESS PLOTS USE THESE!!! 
+#-----------------------------------------
+
+#f_H_minimal <- function(c, v) {
+#  c * (1 - c) * (1 - v)
+#}
+
+#f_P_minimal <- function(c, v) {
+#  v * (1 - v) * (1 - c)
+#}
+
+#-----------------------------------------
 
 # Evaluate fitness functions
 grid <- grid %>%
@@ -137,7 +152,7 @@ opt_joint_acute <- find_nash_brute_force(opt_c_ac, opt_v_ac)
 # PLOTS 
 A <- ggplot(grid, aes(x=v, y=c, z=f_H_acute)) +
   geom_contour_filled(breaks = seq(0, 1, length.out = 10)) +  # Creates 4 bins
-  geom_line(data = opt_c_ac, aes(x=v, y=c), color="steelblue", size=2, inherit.aes=FALSE) +
+  geom_line(data = opt_c_ac, aes(x=v, y=c), color="steelblue", size=1.5, inherit.aes=FALSE, linetype = "dashed") +
   labs(x="v (virulence)", y="c (clearance)") +
   coord_fixed(xlim = c(0,1), ylim = c(0,1), expand = FALSE) +
   scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
@@ -148,7 +163,7 @@ A <- ggplot(grid, aes(x=v, y=c, z=f_H_acute)) +
 
 B <- ggplot(grid, aes(x=v, y=c, z=f_P_acute)) +
   geom_contour_filled(breaks = seq(0, 1, length.out = 10)) +
-  geom_line(data = opt_v_ac, aes(x=v, y=c), color="lightcoral", size=2, inherit.aes=FALSE) +
+  geom_line(data = opt_v_ac, aes(x=v, y=c), color="lightcoral", size=1.5, inherit.aes=FALSE, linetype = "dashed") +
   labs(x="v (virulence)", y="c (clearance)") +
   coord_fixed(xlim = c(0,1), ylim = c(0,1), expand = FALSE) +
   scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1"))+
@@ -160,10 +175,10 @@ B <- ggplot(grid, aes(x=v, y=c, z=f_P_acute)) +
 C <- ggplot(grid, aes(x = v, y = c, z = joint_fitness_acute)) +
   geom_contour(aes(z = f_H_acute), bins = 10, color = "steelblue", alpha = 0.5) +
   geom_contour(aes(z = f_P_acute), bins = 10, color = "lightcoral", alpha = 0.5) +
-  geom_vline(xintercept = 0.5278595, size = 1.5, color = "firebrick", linetype = "dashed") +
-  geom_hline(yintercept = 0.7773371, size = 1.5, color = "darkblue", linetype = "dashed") +
-  geom_line(data = opt_c_ac, aes(x = v, y = c), color = "steelblue", inherit.aes = FALSE, size = 2) +
-  geom_line(data = opt_v_ac, aes(x = v, y = c), color = "lightcoral", inherit.aes = FALSE, size = 2) +
+  geom_vline(xintercept = 0.5278595, size = 1.5, color = "firebrick", linetype = "solid") +
+  geom_hline(yintercept = 0.7773371, size = 1.5, color = "darkblue", linetype = "solid") +
+  geom_line(data = opt_c_ac, aes(x = v, y = c), color = "steelblue", inherit.aes = FALSE, size = 1.5, linetype = "dashed") +
+  geom_line(data = opt_v_ac, aes(x = v, y = c), color = "lightcoral", inherit.aes = FALSE, size = 1.5, linetype = "dashed") +
   geom_point(data = opt_joint_acute, aes(x = v, y = c), color = "grey20", size = 5, inherit.aes = FALSE) +
   labs(x = "v (virulence)", y = "c (clearance)") +
   coord_fixed(xlim = c(0,1), ylim = c(0,1), expand = FALSE) +
@@ -194,6 +209,176 @@ final_fig <- p + plot_annotation(tag_levels = "A")
 
 ggsave("figures/Figure1.png", final_fig, width = 10, height = 4, units = "in")
 ggsave("figures/Figure1.pdf", final_fig, width = 10, height = 4, units = "in")
+
+
+#===============================================================================
+# MINIMAL FITNESS
+#===============================================================================
+
+# ==========================================
+# MINIMAL FITNESS MODEL - THREE PANEL PLOT
+# ==========================================
+
+# Define minimal fitness functions
+f_H_minimal <- function(c, v) {
+  c * (1 - c) * (1 - v)
+}
+
+f_P_minimal <- function(c, v) {
+  v * (1 - v) * (1 - c)
+}
+
+# Create grid
+c_vals <- seq(0, 1, length.out = 300)
+v_vals <- seq(0, 1, length.out = 300)
+grid_minimal <- expand.grid(c = c_vals, v = v_vals)
+
+# Evaluate fitness functions
+grid_minimal <- grid_minimal %>%
+  mutate(
+    f_H_minimal = mapply(f_H_minimal, c, v),
+    f_P_minimal = mapply(f_P_minimal, c, v),
+    joint_fitness_minimal = f_H_minimal * f_P_minimal
+  )
+
+# Find max fitness for normalization
+fmax_H_minimal <- max(grid_minimal$f_H_minimal)
+fmax_P_minimal <- max(grid_minimal$f_P_minimal)
+
+# Normalize
+grid_minimal <- grid_minimal %>%
+  mutate(
+    f_H_minimal = f_H_minimal / fmax_H_minimal,
+    f_P_minimal = f_P_minimal / fmax_P_minimal,
+    joint_fitness_minimal = f_H_minimal * f_P_minimal
+  )
+
+# Calculate best response curves
+v_vals_br <- seq(0.01, 0.99, length.out = 300)
+c_vals_br <- seq(0.01, 0.99, length.out = 300)
+
+# Host best response to pathogen virulence
+opt_c_minimal <- data.frame(
+  v = v_vals_br,
+  c = sapply(v_vals_br, function(v) {
+    optimize(function(c) -f_H_minimal(c, v), c(1e-3, 0.99))$minimum
+  })
+)
+
+# Pathogen best response to host clearance
+opt_v_minimal <- data.frame(
+  c = c_vals_br,
+  v = sapply(c_vals_br, function(c) {
+    v_seq <- seq(0.01, 0.99, length.out = 200)
+    f_vals <- sapply(v_seq, function(v) f_P_minimal(c, v))
+    v_seq[which.max(f_vals)]
+  })
+)
+
+# Find Nash equilibrium
+find_nash_brute_force <- function(host_df, path_df) {
+  expand.grid(i = 1:nrow(host_df), j = 1:nrow(path_df)) %>%
+    mutate(
+      c_host = host_df$c[i],
+      v_host = host_df$v[i],
+      c_path = path_df$c[j],
+      v_path = path_df$v[j],
+      dist = sqrt((c_host - c_path)^2 + (v_host - v_path)^2)
+    ) %>%
+    arrange(dist) %>%
+    slice(1) %>%
+    transmute(v = v_host, c = c_host)
+}
+
+opt_joint_minimal <- find_nash_brute_force(opt_c_minimal, opt_v_minimal)
+
+cat("Nash equilibrium for minimal fitness:\n")
+cat("v =", opt_joint_minimal$v, ", c =", opt_joint_minimal$c, "\n")
+
+# ==========================================
+# CREATE THREE PANELS
+# ==========================================
+
+# Panel A: Host fitness landscape
+A_minimal <- ggplot(grid_minimal, aes(x = v, y = c, z = f_H_minimal)) +
+  geom_contour_filled(breaks = seq(0, 1, length.out = 10)) +
+  geom_line(data = opt_c_minimal, aes(x = v, y = c), 
+            color = "steelblue", linewidth = 1.5, inherit.aes = FALSE, linetype = "dashed") +
+  labs(x = "v (virulence)", y = "c (clearance)") +
+  coord_fixed(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE) +
+  scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  scale_fill_viridis_d(option = "viridis", 
+                       name = "Host\nFitness",
+                       labels = c("0-0.1", "0.1-0.2", "0.2-0.3", "0.3-0.4", "0.4-0.5", 
+                                  "0.5-0.6", "0.6-0.7", "0.7-0.8", "0.8-0.9", "0.9-1")) +
+  mytheme
+
+# Panel B: Pathogen fitness landscape
+B_minimal <- ggplot(grid_minimal, aes(x = v, y = c, z = f_P_minimal)) +
+  geom_contour_filled(breaks = seq(0, 1, length.out = 10)) +
+  geom_line(data = opt_v_minimal, aes(x = v, y = c), 
+            color = "lightcoral", linewidth = 1.5, inherit.aes = FALSE, linetype = "dashed") +
+  labs(x = "v (virulence)", y = "c (clearance)") +
+  coord_fixed(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE) +
+  scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  scale_fill_viridis_d(option = "viridis", 
+                       name = "Pathogen\nFitness",
+                       labels = c("0-0.1", "0.1-0.2", "0.2-0.3", "0.3-0.4", "0.4-0.5", 
+                                  "0.5-0.6", "0.6-0.7", "0.7-0.8", "0.8-0.9", "0.9-1")) +
+  mytheme
+
+# Panel C: Joint fitness with best responses and Nash
+C_minimal <- ggplot(grid_minimal, aes(x = v, y = c, z = joint_fitness_minimal)) +
+  geom_contour(aes(z = f_H_minimal), bins = 10, color = "steelblue", alpha = 0.5) +
+  geom_contour(aes(z = f_P_minimal), bins = 10, color = "lightcoral", alpha = 0.5) +
+  geom_vline(xintercept = opt_joint_minimal$v, linewidth = 1.5, 
+             color = "firebrick", linetype = "solid") +
+  geom_hline(yintercept = opt_joint_minimal$c, linewidth = 1.5, 
+             color = "darkblue", linetype = "solid") +
+  geom_line(data = opt_c_minimal, aes(x = v, y = c), 
+            color = "steelblue", inherit.aes = FALSE, linewidth = 1.5, linetype = "dashed") +
+  geom_line(data = opt_v_minimal, aes(x = v, y = c), 
+            color = "lightcoral", inherit.aes = FALSE, linewidth = 1.5, linetype = "dashed") +
+  geom_point(data = opt_joint_minimal, aes(x = v, y = c), 
+             color = "grey20", size = 5, inherit.aes = FALSE) +
+  labs(x = "v (virulence)", y = "c (clearance)") +
+  coord_fixed(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE) +
+  scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  mytheme
+
+# ==========================================
+# ARRANGE AS FACETS (same style as original)
+# ==========================================
+
+strip_y <- function(p) {
+  p + labs(y = NULL) +
+    theme(axis.title.y = element_blank(),
+          axis.text.y  = element_blank(),
+          axis.ticks.y = element_blank())
+}
+
+A1_minimal <- A_minimal + labs(x = NULL, y = "c (clearance)")
+B1_minimal <- strip_y(B_minimal) + labs(x = "v (virulence)")
+C1_minimal <- strip_y(C_minimal) + labs(x = NULL)
+
+p_minimal <- (A1_minimal | B1_minimal | C1_minimal) +
+  plot_layout(guides = "collect") &
+  theme(
+    plot.tag = element_text(face = "bold"),
+    legend.position = "right",
+    text = element_text(size = 14)
+  )
+
+final_fig_minimal <- p_minimal + plot_annotation(
+  tag_levels = "A",
+)
+
+print(final_fig_minimal)
+ggsave("fitness_landscapes_minimal.pdf", final_fig_minimal, width = 14, height = 5)
+
 
 #================================ FIGURE 2 =============================================
 #============= Multiple Nash equlibria and example for tree intersections ==============
@@ -304,17 +489,17 @@ plot_panel <- function(bV, mV, bS, mS, v_int, s_int,
   if (show_best_response) {
     p <- p +
       geom_line(data = BR_host, aes(v, s), 
-                color = "lightcoral", linewidth = 2) +
+                color = "lightcoral", linewidth = 2, linetype = "dashed") +
       geom_line(data = BR_path, aes(v, s), 
-                color = "steelblue", linewidth = 2)
+                color = "steelblue", linewidth = 2, linetype = "dashed")
   }
   
   # Add strategy lines (dashed)
   p <- p +
     geom_line(data = host_data, aes(v, s), 
-              linetype = "dashed", linewidth = 1.5, color = col_host) +
+              linetype = "solid", linewidth = 1.5, color = col_host) +
     geom_line(data = path_data, aes(v, s), 
-              linetype = "dashed", linewidth = 1.5, color = col_path) +
+              linetype = "solid", linewidth = 1.5, color = col_path) +
     coord_fixed(xlim = c(0, 1), ylim = c(0, 1), expand = FALSE) +
     scale_x_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
     scale_y_continuous(breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
@@ -507,7 +692,7 @@ omega_spike_panel <- function(df, who = c("Path", "Host"),
   # Select correct omega column from CSV
   omega_col <- if (who == "Path") "omegaPath" else "omegaHost"
   
-  # KEY FIX: Read omega directly from CSV, don't calculate from dwell
+  # Read omega directly from CSV, don't calculate from dwell
 dat <- df %>%
   filter(event == "post") %>%
   transmute(
@@ -523,7 +708,6 @@ dat <- df %>%
 p <- ggplot(dat) +
   geom_segment(aes(x = x, xend = x, y = 1e-2, yend = pmax(1e-2, y)),
                linewidth = 0.35, alpha = 0.9) +
-  #scale_x_log10(limits = X_LIMS, breaks = X_BREAKS, labels = X_LABS) +
   scale_x_log10(limits = X_LIMS, breaks = X_BREAKS, labels = X_LABS)+
   scale_y_log10(limits = W_LIMS, breaks = W_BREAKS, labels = W_LABS,
                 minor_breaks = NULL) +
@@ -547,7 +731,7 @@ if (show_xlab) {
 p
 }
 
-# ---------- Line panels for v, c, F (keep existing) ----------
+# ---------- Line panels for v, c, W ----------
 make_line <- function(df, y, ylab = NULL, show_xlab = FALSE, show_ylab = TRUE) {
   p <- ggplot(df, aes(x = gen, y = {{y}})) +
     geom_line(linewidth = 0.5, alpha = 0.85) +
@@ -576,147 +760,28 @@ thin_for_plot <- function(df_post, every = 100) {
 }
 
 # ---------- Build Figure 3 with omega panels ----------
-# Load your data
-ei_acute <- read.csv("results/ei_simulation.csv")
-es_acute <- read.csv("results/es_simulation.csv")
+# Original simulations
+# Acute fitness functions, all simulations
+ei_acute                <- read.csv("organized_test_simulations/Acute_Fitness_Model/20251028_Host&Path_Reactive_m&a_0.01/results/ei_simulation.csv")%>% filter(event == "post", gen > 10000)
+es_acute                <- read.csv("organized_test_simulations/Acute_Fitness_Model/20251028_Host&Path_Reactive_m&a_0.01/results/es_simulation.csv")%>% filter(event == "post", gen > 10000)
+es_acute_fixed_host     <- read.csv("organized_test_simulations/Acute_Fitness_Model/20251104_Fixed_Host_m&a_0.01/results/es_simulation.csv")%>% filter(event == "post", gen > 10000)
+es_acute_fixed_pathogen <- read.csv("organized_test_simulations/Acute_Fitness_Model/20251104_Fixed_Path_m&a_0.01/results/es_simulation.csv")%>% filter(event == "post", gen > 10000)
 
-ei_post2 <- ei_acute %>% filter(event == "post", gen > 10000)
-es_post2 <- es_acute %>% filter(event == "post", gen > 10000)
+# Minimal fitness, all simulations 
+ei_acute_both_reactive_minimal_fit  <- read.csv("organized_test_simulations/Minimal_Fitness_Model/20251030_Host&Path_Reactive_m&a_0.01/results/ei_simulation.csv")%>% filter(event == "post", gen > 10000)
+es_acute_both_reactive_minimal_fit  <- read.csv("organized_test_simulations/Minimal_Fitness_Model/20251030_Host&Path_Reactive_m&a_0.01/results/es_simulation.csv")%>% filter(event == "post", gen > 10000)
+es_acute_fixed_host_minimal_fit     <- read.csv("organized_test_simulations/Minimal_Fitness_Model/20251030_Fixed_Host_m&a_0.01/results/es_simulation.csv")%>% filter(event == "post", gen > 10000)
+es_acute_fixed_pathogen_minimal_fit <- read.csv("organized_test_simulations/Minimal_Fitness_Model/20251030_Fixed_Path_m&a_0.01/results/es_simulation.csv")%>% filter(event == "post", gen > 10000)
 
-ei_thin <- thin_for_plot(ei_post2, every = 1000)
-es_thin <- thin_for_plot(es_post2, every = 1000)
+ei_acute_thin                <- thin_for_plot(ei_acute, every = 100)
+es_acute_thin                <- thin_for_plot(es_acute, every = 100)
+es_acute_fixed_host_thin     <- thin_for_plot(es_acute_fixed_host, every = 100)
+es_acute_fixed_pathogen_thin <- thin_for_plot(es_acute_fixed_pathogen, every = 100)
 
-
-# ---------- LOG VERSION (original manuscript style) ----------
-X_LIMS_LOG   <- c(1e4, 1e6)
-X_BREAKS_LOG <- c(1e4, 1e5, 1e6)
-X_LABS_LOG   <- trans_format("log10", math_format(10^.x))
-
-W_LIMS_LOG   <- c(1e-2, 1e6)
-W_BREAKS_LOG <- c(1e-2, 1e2, 1e6)  # Sparser breaks
-W_LABS_LOG   <- trans_format("log10", math_format(10^.x))
-
-# Log-scale line panels
-make_line_log <- function(df, y, ylab = NULL, show_xlab = FALSE, show_ylab = TRUE) {
-  p <- ggplot(df, aes(x = gen, y = {{y}})) +
-    geom_line(linewidth = 0.5, alpha = 0.85) +
-    scale_x_log10(limits = X_LIMS_LOG, breaks = X_BREAKS_LOG, labels = X_LABS_LOG) +
-    scale_y_continuous(limits = c(0, 1), breaks = c(0, .5, 1)) +
-    coord_cartesian(xlim = X_LIMS_LOG) +
-    mytheme
-  
-  if (show_ylab) p <- p + labs(y = ylab) 
-  else p <- p + labs(y = NULL) +
-      theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
-  
-  if (show_xlab) p <- p + labs(x = "Evolutionary time") 
-  else p <- p + labs(x = NULL) +
-      theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
-  
-  p
-}
-
-# Log-scale omega panels
-omega_panel_log <- function(df, who = c("Path", "Host"),
-                            k_per_decade = 40,
-                            cap = 1e6,
-                            show_xlab = FALSE, 
-                            show_ylab = TRUE, 
-                            ylab = NULL) {
-  who <- match.arg(who)
-  omega_col <- if (who == "Path") "omegaPath" else "omegaHost"
-  
-  dat <- df %>%
-    filter(event == "post") %>%
-    transmute(
-      x = gen,
-      y = pmin(cap, pmax(1e-12, as.numeric(.data[[omega_col]]))),
-      lbin = floor(log10(x) * k_per_decade)
-    ) %>%
-    group_by(lbin) %>%
-    slice_max(order_by = y, n = 1, with_ties = FALSE) %>%
-    ungroup()
-  
-  p <- ggplot(dat) +
-    geom_segment(aes(x = x, xend = x, y = 1e-2, yend = pmax(1e-2, y)),
-                 linewidth = 0.35, alpha = 0.9) +
-    scale_x_log10(limits = X_LIMS_LOG, breaks = X_BREAKS_LOG, labels = X_LABS_LOG) +
-    scale_y_log10(limits = W_LIMS_LOG, breaks = W_BREAKS_LOG, labels = W_LABS_LOG,
-                  minor_breaks = NULL) +
-    coord_cartesian(xlim = X_LIMS_LOG, ylim = W_LIMS_LOG) +
-    mytheme
-  
-  if (show_ylab) {
-    p <- p + labs(y = ylab)
-  } else {
-    p <- p + labs(y = NULL) +
-      theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
-  }
-  
-  if (show_xlab) {
-    p <- p + labs(x = "Evolutionary time")
-  } else {
-    p <- p + labs(x = NULL) +
-      theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
-  }
-  
-  p
-}
-
-# Build log-scale figure
-pA_log <- make_line_log(ei_post2, y = v,       ylab = expression(italic(v)))
-pC_log <- make_line_log(ei_post2, y = s,       ylab = expression(italic(c)))
-pE_log <- make_line_log(ei_post2, y = pathFit, ylab = expression(italic(F)[P]))
-pG_log <- make_line_log(ei_post2, y = hostFit, ylab = expression(italic(F)[H]))
-pI_log <- omega_panel_log(ei_post2, "Path", ylab = expression(omega[P]))
-pK_log <- omega_panel_log(ei_post2, "Host", ylab = expression(omega[H]), show_xlab = TRUE)
-
-pB_log <- make_line_log(es_post2, y = v,       show_ylab = FALSE)
-pD_log <- make_line_log(es_post2, y = s,       show_ylab = FALSE)
-pF_log <- make_line_log(es_post2, y = pathFit, show_ylab = FALSE)
-pH_log <- make_line_log(es_post2, y = hostFit, show_ylab = FALSE)
-pJ_log <- omega_panel_log(es_post2, "Path", show_ylab = FALSE)
-pL_log <- omega_panel_log(es_post2, "Host", show_ylab = FALSE, show_xlab = TRUE)
-
-final_plot_log <- (
-  (pA_log | pB_log) /
-    (pC_log | pD_log) /
-    (pE_log | pF_log) /
-    (pG_log | pH_log) /
-    (pI_log | pJ_log) /
-    (pK_log | pL_log)
-) +
-  plot_annotation(tag_levels = "A") &
-  theme(
-    plot.tag.position = "topleft",
-    plot.tag = element_text(face = "bold", size = 12)
-  )
-
-# ---------- Summary statistics (for paper) ----------
-ei_post2 %>%
-  summarise(
-    omega_P_median = median(omegaPath),
-    omega_H_median = median(omegaHost), 
-    v_median = median(v), 
-    c_median = median(s), 
-    fh_median = median(hostFit), 
-    fp_median = median(pathFit)
-  ) %>% print()
-
-es_post2 %>%
-  summarise(
-    omega_P_median = median(omegaPath),
-    omega_H_median = median(omegaHost), 
-    v_median = median(v), 
-    c_median = median(s), 
-    fh_median = median(hostFit), 
-    fp_median = median(pathFit)
-  ) %>% print()
-
-ggsave("figures/Figure3.png", final_plot_log, width = 9, height = 9, units = "in")
-ggsave("figures/Figure3.pdf", final_plot_log, width = 9, height = 9, units = "in")
-
-# Supplementary figures
+ei_acute_both_reactive_minimal_fit_thin  <- thin_for_plot(ei_acute_both_reactive_minimal_fit, every = 100)
+es_acute_both_reactive_minimal_fit_thin  <- thin_for_plot(es_acute_both_reactive_minimal_fit, every = 100)
+es_acute_fixed_host_minimal_fit_thin     <- thin_for_plot(es_acute_fixed_host_minimal_fit, every = 100)
+es_acute_fixed_pathogen_minimal_fit_thin <- thin_for_plot(es_acute_fixed_pathogen_minimal_fit, every = 100)
 
 # ---------- LINEAR X settings ----------
 library(scales)
@@ -734,6 +799,7 @@ X_LABS_ZOOM   <- label_number(accuracy = 1, big.mark = ",")
 W_LIMS_LOG   <- c(1e-2, 1e6)
 W_BREAKS_LOG <- c(1e-2, 1e2, 1e6)
 W_LABS_LOG   <- trans_format("log10", math_format(10^.x))
+
 
 # ---------- Line panels: linear x ----------
 make_line_linear <- function(df, y, x_lims, x_breaks, x_labels,
@@ -804,71 +870,113 @@ omega_panel_linear <- function(df, who = c("Path", "Host"),
 }
 
 # ---------- Assemble: linear FULL (0–1e6) ----------
-pA_lin <- make_line_linear(ei_thin, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(v)))
-pC_lin <- make_line_linear(ei_thin, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(c)))
-pE_lin <- make_line_linear(ei_thin, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(F)[P]))
-pG_lin <- make_line_linear(ei_thin, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(F)[H]))
-pI_lin <- omega_panel_linear(ei_thin, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+pA_lin <- make_line_linear(ei_acute_thin, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(v)))
+pE_lin <- make_line_linear(ei_acute_thin, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(c)))
+pI_lin <- make_line_linear(ei_acute_thin, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(W[P]))
+pM_lin <- make_line_linear(ei_acute_thin, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(W[H]))
+pQ_lin <- omega_panel_linear(ei_acute_thin, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
                              ylab = expression(omega[P]))
-pK_lin <- omega_panel_linear(ei_thin, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+pU_lin <- omega_panel_linear(ei_acute_thin, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
                              ylab = expression(omega[H]), show_xlab = TRUE)
 
-pB_lin <- make_line_linear(es_thin, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
-pD_lin <- make_line_linear(es_thin, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
-pF_lin <- make_line_linear(es_thin, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
-pH_lin <- make_line_linear(es_thin, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
-pJ_lin <- omega_panel_linear(es_thin, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+pB_lin <- make_line_linear(es_acute_thin, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pF_lin <- make_line_linear(es_acute_thin, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pJ_lin <- make_line_linear(es_acute_thin, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pN_lin <- make_line_linear(es_acute_thin, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pR_lin <- omega_panel_linear(es_acute_thin, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
                              show_ylab = FALSE)
-pL_lin <- omega_panel_linear(es_thin, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+pV_lin <- omega_panel_linear(es_acute_thin, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
                              show_ylab = FALSE, show_xlab = TRUE)
 
-final_plot_linear_full <- (
-  (pA_lin | pB_lin) /
-    (pC_lin | pD_lin) /
-    (pE_lin | pF_lin) /
-    (pG_lin | pH_lin) /
-    (pI_lin | pJ_lin) /
-    (pK_lin | pL_lin)
+pC_lin <- make_line_linear(es_acute_fixed_host_thin, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pG_lin <- make_line_linear(es_acute_fixed_host_thin, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pK_lin <- make_line_linear(es_acute_fixed_host_thin, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pO_lin <- make_line_linear(es_acute_fixed_host_thin, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pS_lin <- omega_panel_linear(es_acute_fixed_host_thin, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+                             show_ylab = FALSE)
+pW_lin <- omega_panel_linear(es_acute_fixed_host_thin, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+                             show_ylab = FALSE, show_xlab = TRUE)
+
+pD_lin <- make_line_linear(es_acute_fixed_pathogen_thin, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pH_lin <- make_line_linear(es_acute_fixed_pathogen_thin, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pL_lin <- make_line_linear(es_acute_fixed_pathogen_thin, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pP_lin <- make_line_linear(es_acute_fixed_pathogen_thin, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pT_lin <- omega_panel_linear(es_acute_fixed_pathogen_thin, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+                             show_ylab = FALSE)
+pX_lin <- omega_panel_linear(es_acute_fixed_host_thin, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+                             show_ylab = FALSE, show_xlab = TRUE)
+
+total_thin <- (
+  (pA_lin | pC_lin | pD_lin| pB_lin ) /
+    (pE_lin  | pG_lin | pH_lin| pF_lin) /
+    (pI_lin  | pK_lin | pL_lin| pJ_lin) /
+    (pM_lin  | pO_lin | pP_lin| pN_lin) /
+    (pQ_lin  | pS_lin | pT_lin| pR_lin) /
+    (pU_lin  | pW_lin | pX_lin| pV_lin)
 ) + plot_annotation(tag_levels = "A") &
   theme(plot.tag.position = "topleft",
         plot.tag = element_text(face = "bold", size = 12))
 
-# ---------- Assemble: linear ZOOM (500k–1M) ----------
-pA_z <- make_line_linear(ei_thin, y = v,       X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, ylab = expression(italic(v)))
-pC_z <- make_line_linear(ei_thin, y = s,       X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, ylab = expression(italic(c)))
-pE_z <- make_line_linear(ei_thin, y = pathFit, X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, ylab = expression(italic(F)[P]))
-pG_z <- make_line_linear(ei_thin, y = hostFit, X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, ylab = expression(italic(F)[H]))
-pI_z <- omega_panel_linear(ei_thin, "Path", x_lims = X_LIMS_ZOOM, x_breaks = X_BREAKS_ZOOM, x_labels = X_LABS_ZOOM,
-                           ylab = expression(omega[P]))
-pK_z <- omega_panel_linear(ei_thin, "Host", x_lims = X_LIMS_ZOOM, x_breaks = X_BREAKS_ZOOM, x_labels = X_LABS_ZOOM,
-                           ylab = expression(omega[H]), show_xlab = TRUE)
+ggsave("figures/Figure3_lin.png", total_thin, width = 9, height = 9, units = "in")
+ggsave("figures/Figure3_lin.pdf", total_thin, width = 9, height = 9, units = "in")
 
-pB_z <- make_line_linear(es_thin, y = v,       X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, show_ylab = FALSE)
-pD_z <- make_line_linear(es_thin, y = s,       X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, show_ylab = FALSE)
-pF_z <- make_line_linear(es_thin, y = pathFit, X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, show_ylab = FALSE)
-pH_z <- make_line_linear(es_thin, y = hostFit, X_LIMS_ZOOM, X_BREAKS_ZOOM, X_LABS_ZOOM, show_ylab = FALSE)
-pJ_z <- omega_panel_linear(es_thin, "Path", x_lims = X_LIMS_ZOOM, x_breaks = X_BREAKS_ZOOM, x_labels = X_LABS_ZOOM,
-                           show_ylab = FALSE)
-pL_z <- omega_panel_linear(es_thin, "Host", x_lims = X_LIMS_ZOOM, x_breaks = X_BREAKS_ZOOM, x_labels = X_LABS_ZOOM,
-                           show_ylab = FALSE, show_xlab = TRUE)
 
-final_plot_linear_zoom <- (
-  (pA_z | pB_z) /
-    (pC_z | pD_z) /
-    (pE_z | pF_z) /
-    (pG_z | pH_z) /
-    (pI_z | pJ_z) /
-    (pK_z | pL_z)
+# ---------- Assemble: linear FULL (0–1e6) - MINIMAL FITNESS ----------
+pA_lin_m <- make_line_linear(ei_acute_both_reactive_minimal_fit_thin, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(v)))
+pE_lin_m <- make_line_linear(ei_acute_both_reactive_minimal_fit_thin, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(italic(c)))
+pI_lin_m <- make_line_linear(ei_acute_both_reactive_minimal_fit_thin, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(W[P]))
+pM_lin_m <- make_line_linear(ei_acute_both_reactive_minimal_fit_thin, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, ylab = expression(W[H]))
+pQ_lin_m <- omega_panel_linear(ei_acute_both_reactive_minimal_fit_thin, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+                             ylab = expression(omega[P]))
+pU_lin_m <- omega_panel_linear(ei_acute_both_reactive_minimal_fit_thin, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+                             ylab = expression(omega[H]), show_xlab = TRUE)
+
+pB_lin_m <- make_line_linear(es_acute_both_reactive_minimal_fit_thin, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pF_lin_m <- make_line_linear(es_acute_both_reactive_minimal_fit_thin, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pJ_lin_m <- make_line_linear(es_acute_both_reactive_minimal_fit_thin, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pN_lin_m <- make_line_linear(es_acute_both_reactive_minimal_fit_thin, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pR_lin_m <- omega_panel_linear(es_acute_both_reactive_minimal_fit_thin, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+                             show_ylab = FALSE)
+pV_lin_m <- omega_panel_linear(es_acute_both_reactive_minimal_fit_thin, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+                             show_ylab = FALSE, show_xlab = TRUE)
+
+pC_lin_m <- make_line_linear(es_acute_fixed_host_minimal_fit_thin, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pG_lin_m <- make_line_linear(es_acute_fixed_host_minimal_fit_thin, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pK_lin_m <- make_line_linear(es_acute_fixed_host_minimal_fit_thin, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pO_lin_m <- make_line_linear(es_acute_fixed_host_minimal_fit_thin, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pS_lin_m <- omega_panel_linear(es_acute_fixed_host_minimal_fit_thin, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+                             show_ylab = FALSE)
+pW_lin_m <- omega_panel_linear(es_acute_fixed_host_minimal_fit_thin, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+                             show_ylab = FALSE, show_xlab = TRUE)
+
+pD_lin_m <- make_line_linear(es_acute_fixed_pathogen_minimal_fit_thin, y = v,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pH_lin_m <- make_line_linear(es_acute_fixed_pathogen_minimal_fit_thin, y = s,       X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pL_lin_m <- make_line_linear(es_acute_fixed_pathogen_minimal_fit_thin, y = pathFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pP_lin_m <- make_line_linear(es_acute_fixed_pathogen_minimal_fit_thin, y = hostFit, X_LIMS_LIN, X_BREAKS_LIN, X_LABS_LIN, show_ylab = FALSE)
+pT_lin_m <- omega_panel_linear(es_acute_fixed_pathogen_minimal_fit_thin, "Path", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+                             show_ylab = FALSE)
+pX_lin_m   <- omega_panel_linear(es_acute_fixed_pathogen_minimal_fit_thin, "Host", x_lims = X_LIMS_LIN, x_breaks = X_BREAKS_LIN, x_labels = X_LABS_LIN,
+                              show_ylab = FALSE, show_xlab = TRUE)
+
+total_thin_minimal <- (
+  (pA_lin_m   | pC_lin_m | pD_lin_m| pB_lin_m ) /
+    (pE_lin_m | pG_lin_m | pH_lin_m| pF_lin_m) /
+    (pI_lin_m | pK_lin_m | pL_lin_m| pJ_lin_m ) /
+    (pM_lin_m | pO_lin_m | pP_lin_m| pN_lin_m ) /
+    (pQ_lin_m | pS_lin_m | pT_lin_m| pR_lin_m) /
+    (pU_lin_m | pW_lin_m | pX_lin_m| pV_lin_m)
 ) + plot_annotation(tag_levels = "A") &
   theme(plot.tag.position = "topleft",
         plot.tag = element_text(face = "bold", size = 12))
 
+ggsave("figures/Figure3_lin_minimal.png", total_thin_minimal, width = 9, height = 9, units = "in")
+ggsave("figures/Figure3_lin_minimal.pdf", total_thin_minimal, width = 9, height = 9, units = "in")
 
 #============================== Distribution plots ====================================
 
 # Find the range of densities across BOTH datasets
-ei_max <- max(table(cut(ei_post2$v, breaks=100), cut(ei_post2$s, breaks=100)))
-es_max <- max(table(cut(es_post2$v, breaks=100), cut(es_post2$s, breaks=100)))
+ei_max <- max(table(cut(ei_acute$v, breaks=100), cut(ei_acute$s, breaks=100)))
+es_max <- max(table(cut(es_acute$v, breaks=100), cut(es_acute$s, breaks=100)))
 density_max <- max(ei_max, es_max)
 
 # Set shared limits (you can adjust these)
@@ -890,7 +998,7 @@ common_fill <- scale_fill_viridis_c(
 )
 
 #  make the fill use the bin count (floored at 1 to avoid log(0))
-a <- ggplot(ei_post2, aes(v, s)) +
+a <- ggplot(ei_acute, aes(v, s)) +
   stat_bin2d(bins = 100, aes(fill = after_stat(pmax(count, 1)))) +
   common_fill +
   labs(x = "v (virulence)", y = "c (clearance)")+
@@ -900,7 +1008,7 @@ a <- ggplot(ei_post2, aes(v, s)) +
            color = "firebrick", linewidth = 1,
            arrow = arrow(length = unit(0.3, "cm"), type = "closed"))
 
-a_inset <- ggplot(ei_post2, aes(v, s)) +
+a_inset <- ggplot(ei_acute, aes(v, s)) +
   stat_bin2d(bins = 50, aes(fill = after_stat(pmax(count, 1)))) +
   common_fill + guides(fill = "none") +
   labs(x = NULL, y = NULL)+
@@ -912,7 +1020,7 @@ a_inset <- ggplot(ei_post2, aes(v, s)) +
     axis.text = element_text(size = 7)
   )
 
-b <- ggplot(es_post2, aes(v, s)) +
+b <- ggplot(es_acute, aes(v, s)) +
   stat_bin2d(bins = 100, aes(fill = after_stat(pmax(count, 1)))) +
   common_fill +
   labs(x = "v (virulence)", y = "c (clearance)")+
@@ -920,18 +1028,41 @@ b <- ggplot(es_post2, aes(v, s)) +
   scale_y_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1"))
 
 
-a_with_inset <- a +
-  inset_element(a_inset, left = 0.05, bottom = 0.05, right = 0.75, top = 0.65)
+c <- ggplot(es_acute_fixed_host, aes(v, s)) +
+  stat_bin2d(bins = 100, aes(fill = after_stat(pmax(count, 1)))) +
+  common_fill +
+  labs(x = "v (virulence)", y = "c (clearance)")+
+  scale_x_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  scale_y_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1"))
+
+
+d <- ggplot(es_acute_fixed_pathogen, aes(v, s)) +
+  stat_bin2d(bins = 100, aes(fill = after_stat(pmax(count, 1)))) +
+  common_fill +
+  labs(x = "v (virulence)", y = "c (clearance)")+
+  scale_x_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1")) +
+  scale_y_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1), labels = c("0", "0.5", "1"))
 
 # drop y stuff on the right panel
 strip_y <- function(p) p + theme(axis.title.y = element_blank(),
                                  axis.text.y  = element_blank(),
                                  axis.ticks.y = element_blank())
+strip_x <- function(p) p + theme(axis.title.x = element_blank(),
+                                 axis.text.x  = element_blank(),
+                                 axis.ticks.x = element_blank())
 
-b_plot <- strip_y(b) + labs(x = "v (virulence)")
+a_plot <- strip_x(a) 
+
+a_with_inset <- a_plot +
+  inset_element(a_inset, left = 0.05, bottom = 0.05, right = 0.75, top = 0.65)
+
+b_plot <- strip_y(b) 
+b_plot <- strip_x(b_plot)
+c_plot <- c
+d_plot <- strip_y(d) + labs(x = "v (virulence)")
 
 # Compose with one merged legend
-p3 <- (a_with_inset | b_plot) +
+p3 <- ((a_with_inset | b_plot) / (c_plot | d_plot)) +
   plot_layout(guides = "collect") &
   theme(legend.position = "right",
         plot.tag = element_text(face = "bold"),
@@ -939,17 +1070,17 @@ p3 <- (a_with_inset | b_plot) +
 
 distribution_fig <- p3 + plot_annotation(tag_levels = "A")
 
-ggsave("figures/distribution.png", distribution_fig, width = 7, height = 3.5, units = "in")
-ggsave("figures/distribution.pdf", distribution_fig, width = 7, height = 3.5, units = "in")
+ggsave("figures/distribution.png", distribution_fig, width = 7.5, height = 6, units = "in")
+ggsave("figures/distribution.pdf", distribution_fig, width = 7.5, height = 6, units = "in")
 
 #===================================== Dwell times =====================================
 
 # Calculate CCDF as COUNTS not proportions
 plot_data <- bind_rows(
-  ei_post2 %>% filter(dwell > 0, mutator == "Path") %>% mutate(scenario = "EI Path"),
-  ei_post2 %>% filter(dwell > 0, mutator == "Host") %>% mutate(scenario = "EI Host"),
-  es_post2 %>% filter(dwell > 0, mutator == "Path") %>% mutate(scenario = "ES Path"),
-  es_post2 %>% filter(dwell > 0, mutator == "Host") %>% mutate(scenario = "ES Host")
+  ei_acute %>% filter(dwell > 0, mutator == "Path") %>% mutate(scenario = "EI Path"),
+  ei_acute %>% filter(dwell > 0, mutator == "Host") %>% mutate(scenario = "EI Host"),
+  es_acute %>% filter(dwell > 0, mutator == "Path") %>% mutate(scenario = "ES Path"),
+  es_acute %>% filter(dwell > 0, mutator == "Host") %>% mutate(scenario = "ES Host")
 ) %>%
   group_by(scenario) %>%
   arrange(dwell) %>%
@@ -966,7 +1097,7 @@ p_es <- plot_data %>%
   ggplot(aes(x = dwell, y = ccdf_count, color = mutator)) +
   geom_line(linewidth = 0.8) +
   scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
-  scale_x_continuous(limits = c(0, 0.2), breaks = c(0, 0.1, 0.2)) +
+  scale_x_continuous(limits = c(0, 0.1), breaks = c(0, 0.1)) +
   scale_color_manual(values = c("Path" = "darkblue", "Host" = "firebrick")) +
   labs(x = "Dwell time", y = "Number of events ≥ x") +
   mytheme+
@@ -978,7 +1109,7 @@ p_ei <- plot_data %>%
   ggplot(aes(x = dwell, y = ccdf_count, color = mutator)) +
   geom_line(linewidth = 0.8) +
   scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
-  scale_x_continuous(limits = c(0, 5), breaks = c(0, 2, 4)) +
+  scale_x_continuous(limits = c(0, 3), breaks = c(0, 3)) +
   scale_color_manual(values = c("Path" = "darkblue", "Host" = "firebrick")) +
   labs(x = "Dwell time", y = NULL) +
   mytheme+
@@ -996,7 +1127,7 @@ strip_y <- function(p) {
 A3 <- p_ei + labs(x = "v (virulence)", y = "c (clearance)")
 B3 <- strip_y(p_es) + labs(x = "v (virulence)")
 
-p3 <- (A3 | B3) +
+pdwell <- (A3 | B3) +
   plot_layout(guides = "collect") &
   theme(
     plot.tag = element_text(face = "bold"),
@@ -1014,11 +1145,7 @@ ggsave("figures/dwell.pdf", dwell_fig, width = 7, height = 3.5, units = "in")
 ### CURRENT VS. 100 GENS AGO
 
 # Load the time series data
-fig6_data <- read.csv("postproc/fig6_timeseries.csv")
-
-# Load data
-es_full <- read.csv("results/es_simulation.csv")
-es_post <- es_full %>% filter(event == "post")
+fig6_data <- read.csv("~/Documents/GitHub/GoldsteinGameTheory/organized_test_simulations/Acute_Fitness_Model/20251028_Host&Path_Reactive_m&a_0.01/postproc/fig6_timeseries.csv")
 
 # Fitness functions
 beta <- 1; d0 <- 0.1; mc <- 0.1; mv <- 1.0; epsilon <- 1e-4
@@ -1107,15 +1234,15 @@ make_snapshot_panel <- function(gen_num,
   prev_mode <- match.arg(prev_mode)
   
   # current snapshot
-  snapshot_current <- es_post %>% filter(gen == gen_num)
+  snapshot_current <- es_acute %>% filter(gen == gen_num)
   if (nrow(snapshot_current) == 0) return(NULL)
   
   # choose previous snapshot
   prev_gen <- switch(
     prev_mode,
-    adaptive = get_prev_adaptive(es_post, gen_now = gen_num,
+    adaptive = get_prev_adaptive(es_acute, gen_now = gen_num,
                                  step = step, min_delta = min_delta),
-    lag      = get_prev_by_lag(es_post, gen_now = gen_num, lag_gens = lag_gens)
+    lag      = get_prev_by_lag(es_acute, gen_now = gen_num, lag_gens = lag_gens)
   )
   if (is.null(prev_gen) || nrow(prev_gen) == 0) prev_gen <- snapshot_current
   
@@ -1146,15 +1273,15 @@ make_snapshot_panel <- function(gen_num,
                  color = "steelblue",  bins = 10, linewidth = 0.3, alpha = 0.7) +
     # previous (dotted) + current (longdash)
     geom_line(data = host_line_prev, aes(v, s),
-              color = "darkblue", linetype = "dotted", linewidth = 1.1, alpha = 0.85) +
+              color = "darkblue", linetype = "dotted", linewidth = 1.5, alpha = 0.85) +
     geom_line(data = path_line_prev, aes(v, s),
-              color = "firebrick", linetype = "dotted", linewidth = 1.1, alpha = 0.85) +
+              color = "firebrick", linetype = "dotted", linewidth = 1.5, alpha = 0.85) +
     geom_line(data = host_line_current, aes(v, s),
-              color = "darkblue", linetype = "longdash", linewidth = 1.2) +
+              color = "darkblue", linetype = "solid", linewidth = 1.5) +
     geom_line(data = path_line_current, aes(v, s),
-              color = "firebrick", linetype = "longdash", linewidth = 1.2) +
+              color = "firebrick", linetype = "solid", linewidth = 1.5) +
     geom_point(aes(x = snapshot_current$v, y = snapshot_current$s),
-               size = 3, color = "black") +
+               size = 5, color = "black") +
     coord_fixed(xlim = c(0,1), ylim = c(0,1), expand = FALSE, clip = "on") +
     scale_x_continuous(breaks = c(0,0.5,1), labels = c( "0", "0.5", "1")) +
     scale_y_continuous(breaks = c(0,0.5,1), labels = c( "0", "0.5", "1")) +
@@ -1163,7 +1290,7 @@ make_snapshot_panel <- function(gen_num,
     theme(
       panel.background = element_rect(fill = "white"),
       plot.background  = element_rect(fill = "white"),
-      panel.border     = element_rect(fill = NA, color = "black", linewidth = 1),
+      panel.border     = element_rect(fill = NA, color = "grey20", linewidth = 1),
       plot.title       = element_text(hjust = 0.02, vjust = -1, size = 14),
       panel.grid       = element_blank()
     )
@@ -1206,19 +1333,19 @@ for (i in 1:6) {
 snapshot_figure <- (panels[[1]] | panels[[2]] | panels[[3]]) /
   (panels[[4]] + xlab(NULL) + ylab(NULL) | panels[[5]] | panels[[6]] + xlab(NULL))
 
-ggsave("figures/Snapshots.png", snapshot_figure, width = 8, height = 6, units = "in")
-ggsave("figures/Snapshots.pdf", snapshot_figure, width = 8, height = 6, units = "in")
+ggsave("figures/Snapshots.png", snapshot_figure, width = 7.5, height = 5.5, units = "in")
+ggsave("figures/Snapshots.pdf", snapshot_figure, width = 7.5, height = 5.5, units = "in")
 
 
 #=========================== Nash Regions and Occupancy ==================================
 
 # ---------- Load Data ----------
-nash_region <- read.csv("postproc/fig7_region_acute.csv")
-occupancy <- read.csv("postproc/fig7_occupancy.csv")
+nash_region <- read.csv("/Users/canankarakoc/Documents/GitHub/GoldsteinGameTheory/organized_test_simulations/Acute_Fitness_Model/20251028_Host&Path_Reactive_m&a_0.01/postproc/fig7_region_acute.csv")
+occupancy <- read.csv("/Users/canankarakoc/Documents/GitHub/GoldsteinGameTheory/organized_test_simulations/Acute_Fitness_Model/20251028_Host&Path_Reactive_m&a_0.01/postproc/fig7_occupancy.csv")
 
 # ES persistent states
 dwell_threshold <- 0.01
-es_persistent <- es_post2 %>%
+es_persistent <- es_acute %>%
   filter(event == "post", dwell > dwell_threshold) %>%
   mutate(v_bin = cut(v, breaks = 50, labels = FALSE),
          s_bin = cut(s, breaks = 50, labels = FALSE)) %>%
@@ -1432,13 +1559,15 @@ nash_ocupancy <- pA_violations + pB + pC +
 ggsave("figures/nash_ocupancy.png", nash_ocupancy, width = 8, height = 4, units = "in")
 ggsave("figures/nash_ocupancy..pdf", nash_ocupancy, width = 8, height = 4, units = "in")
 
+#!!!! this figure is better when the simulation is recorded every generation 
+
 #==================== Stability analysis ==============================================
 
 # --- Plot 1: Host Strategy Parameters ---
 # Thinned data!!!
 
 # Host intercept (bS)
-p_bS <- ggplot(es_thin, aes(x = gen, y = bS)) +
+p_bS <- ggplot(es_acute, aes(x = gen, y = bS)) +
   geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
   scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
   labs(
@@ -1448,7 +1577,7 @@ p_bS <- ggplot(es_thin, aes(x = gen, y = bS)) +
   mytheme
 
 # Host slope (mS)
-p_mS <- ggplot(es_thin, aes(x = gen, y = mS)) +
+p_mS <- ggplot(es_acute, aes(x = gen, y = mS)) +
   geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
   scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
@@ -1461,7 +1590,7 @@ p_mS <- ggplot(es_thin, aes(x = gen, y = mS)) +
 # --- Plot 2: Pathogen Strategy Parameters ---
 
 # Pathogen intercept (bV)
-p_bV <- ggplot(es_thin, aes(x = gen, y = bV)) +
+p_bV <- ggplot(es_acute, aes(x = gen, y = bV)) +
   geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
   scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
   labs(
@@ -1471,7 +1600,7 @@ p_bV <- ggplot(es_thin, aes(x = gen, y = bV)) +
   mytheme
 
 # Pathogen slope (mV)
-p_mV <- ggplot(es_thin, aes(x = gen, y = mV)) +
+p_mV <- ggplot(es_acute, aes(x = gen, y = mV)) +
   geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
   scale_x_log10(breaks = c(1e4, 1e5, 1e6), labels = trans_format("log10", math_format(10^.x))) +
@@ -1496,7 +1625,7 @@ ggsave("strategy_parameters_evolution.pdf", combined_plot, width = 7.5, height =
 
 # --- Additional: Plot product mS * mV (stability criterion) ---
 
-p_product <- es_post2 %>%
+p_product <- es_acute %>%
   mutate(product = mS * mV) %>%
   ggplot(aes(x = gen, y = product)) +
   geom_line(alpha = 0.7, linewidth = 0.5) +
@@ -1518,7 +1647,7 @@ p_product <- es_post2 %>%
 ggsave("strategy_stability_product.pdf", p_product, width = 6.5, height = 5.5)
 
 # --- Phase plot: mS vs mV ---
-p_phase <- ggplot(es_post2, aes(x = mV, y = mS)) +
+p_phase <- ggplot(es_acute, aes(x = mV, y = mS)) +
   geom_density_2d_filled(alpha = 0.7) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "white") +
   geom_vline(xintercept = 0, linetype = "dashed", color = "white") +
@@ -1545,20 +1674,12 @@ p_phase <- ggplot(es_post2, aes(x = mV, y = mS)) +
   mytheme +
   theme(legend.position = "none")
 
-print(p_phase)
-
-ggsave("strategy_phase_space.pdf", 
-       p_phase, 
-       width = 8, height = 8)
-
-
-
 # Filter to interior equilibria (away from boundaries)
 # ============================================================================
 # When equilibria are at boundaries (v=0,1 or s=0,1), intercepts/slopes
 # become ill-defined (many combinations pass through boundary points)
 
-es_interior <- es_post2 %>%
+es_interior <- es_acute %>%
   filter(v > 0.05, v < 0.95, s > 0.05, s < 0.95)
 
 # Cap extreme slopes at biologically meaningful limits
@@ -1566,7 +1687,7 @@ es_interior <- es_post2 %>%
 # Very large slopes (>10 or <-10) all function similarly due to clamping
 # The distinction between mS=-100 and mS=-1000 doesn't matter biologically
 
-es_capped <- es_post2 %>%
+es_capped <- es_acute %>%
   mutate(
     mS_capped = pmin(pmax(mS, -10), 10),
     mV_capped = pmin(pmax(mV, -10), 10),
@@ -1698,7 +1819,7 @@ ggsave("figures/strategy_params_capped.pdf", plot2, width = 12, height = 8)
 # PLOT 3: Stability product (mS × mV) - most important!
 # ============================================================================
 
-es_stability <- es_post2 %>%
+es_stability <- es_acute %>%
   mutate(
     product = mS * mV,
     product_capped = pmin(pmax(product, -5), 5),
@@ -1710,7 +1831,7 @@ es_stability_thin <- es_stability %>%
   mutate(row_num = row_number()) %>%
   filter(row_num %% 10 == 0)
 
-p_stab <- ggplot(es_stability_thin, aes(x = gen, y = product_capped)) +
+p_stab <- ggplot(es_stability, aes(x = gen, y = product_capped)) +
   geom_line(aes(color = stable), alpha = 0.7, linewidth = 0.5) +
   geom_hline(yintercept = c(-1, 1), linetype = "dashed", color = "firebrick", linewidth = 0.8) +
   geom_hline(yintercept = 0, linetype = "dotted", color = "gray50") +
@@ -1742,7 +1863,7 @@ ggsave("figures/strategy_stability.pdf", p_stab, width = 7, height = 6)
 #"Red hyperbolas: stability boundaries (mS·mV = ±1)
 
 p_phase_interior <- ggplot(es_interior, aes(x = mV, y = mS)) +
-  geom_density_2d_filled(alpha = 0.7, bins = 15) +
+  geom_density_2d_filled(alpha = 0.7, bins = 100) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "white", linewidth = 0.8) +
   geom_vline(xintercept = 0, linetype = "dashed", color = "white", linewidth = 0.8) +
   # Stability boundaries: mS*mV = ±1
@@ -1762,7 +1883,7 @@ p_phase_interior <- ggplot(es_interior, aes(x = mV, y = mS)) +
   mytheme +
   theme(legend.position = "none")
 
-ggsave("figures/strategy_phase_interior.pdf", p_phase_interior, width = 8, height = 8)
+ggsave("figures/strategy_phase_interior.pdf", p_phase_interior, width = 5, height = 5.5)
 
 # ============================================================================
 # PLOT 5: Distinguish boundary vs interior over time
@@ -1805,7 +1926,6 @@ ggsave("figures/boundary_vs_stable.pdf", p_boundary, width = 10, height = 6)
 # SUMMARY STATISTICS
 # ============================================================================
 
-cat("Overall:\n")
 cat("  Fraction at boundaries:", 
     round(mean(es_stability$at_boundary), 3), "\n")
 cat("  Fraction stable:", 
@@ -1829,26 +1949,758 @@ es_interior %>%
   ) %>%
   print()
 
-es_interior %>%
-  mutate(period = cut(gen, 
-                      breaks = c(1e4, 2e5, 5e5, 1e6),
-                      labels = c("Early", "Middle", "Late"))) %>%
-  group_by(period) %>%
+
+#===============================================================================================
+# TIME SERIES ANALYSIS
+#===============================================================================================
+library(pracma)  # for spectral analysis
+library(forecast)  # for time series analysis
+
+# ==========================================
+# 1. ORGANIZE DATA INTO TIDY FORMAT
+# ==========================================
+
+# Function to add metadata to each dataset
+add_metadata <- function(df, fitness, evolution) {
+  df %>%
+    mutate(
+      fitness = fitness,         # "regular" or "minimal"
+      evolution = evolution,     # "ET-ET", "ER-ER", "ERpath-EThost", "ETpath-ERhost"
+    )
+}
+
+# Combine all datasets
+all_data <- bind_rows(
+  # Regular acute fitness
+  add_metadata(ei_acute, "regular", "ET-ET"),
+  add_metadata(es_acute, "regular", "ER-ER"),
+  add_metadata(es_acute_fixed_host, "regular", "ERpath-EThost"),
+  add_metadata(es_acute_fixed_pathogen, "regular", "ETpath-ERhost"),
+  
+  # Minimal fitness
+  add_metadata(ei_acute_both_reactive_minimal_fit, "minimal", "ET-ET"),
+  add_metadata(es_acute_both_reactive_minimal_fit, "minimal", "ER-ER"),
+  add_metadata(es_acute_fixed_host_minimal_fit, "minimal", "ERpath-EThost"),
+  add_metadata(es_acute_fixed_pathogen_minimal_fit, "minimal", "ETpath-ERhost")
+) %>%
+  mutate(
+    condition = paste(fitness, evolution, sep = "_"),
+    # Convert omega columns to numeric, handling "NA" strings
+    omegaPath = as.numeric(ifelse(omegaPath == "NA", NA, omegaPath)),
+    omegaHost = as.numeric(ifelse(omegaHost == "NA", NA, omegaHost))
+  )
+
+# ==========================================
+# 2. TIME SERIES STATISTICS FUNCTIONS
+# ==========================================
+
+# Coefficient of Variation
+calc_cv <- function(x) {
+  x_clean <- na.omit(x)
+  if(length(x_clean) < 2) return(NA)
+  sd(x_clean) / mean(x_clean)
+}
+
+# Spectral slope (noise color): 1/f^β where β indicates noise color
+# β ≈ 0: white noise, β ≈ 1: pink noise, β ≈ 2: brown noise
+calc_spectral_slope <- function(x, time = NULL) {
+  x_clean <- na.omit(x)
+  if(length(x_clean) < 50) return(NA)
+  
+  tryCatch({
+    # Detrend
+    x_detrend <- residuals(lm(x_clean ~ seq_along(x_clean)))
+    
+    # Compute power spectral density
+    spec <- spectrum(x_detrend, plot = FALSE)
+    
+    # Fit linear model in log-log space (exclude DC component)
+    freq <- spec$freq[-1]
+    power <- spec$spec[-1]
+    
+    # Filter out zero/negative values
+    valid <- freq > 0 & power > 0
+    if(sum(valid) < 10) return(NA)
+    
+    fit <- lm(log10(power[valid]) ~ log10(freq[valid]))
+    -coef(fit)[2]  # Return negative slope (β)
+  }, error = function(e) NA)
+}
+
+# Autocorrelation at lag 1
+calc_acf1 <- function(x) {
+  x_clean <- na.omit(x)
+  if(length(x_clean) < 10) return(NA)
+  tryCatch({
+    acf(x_clean, lag.max = 1, plot = FALSE)$acf[2]
+  }, error = function(e) NA)
+}
+
+# Variance
+calc_variance <- function(x) {
+  x_clean <- na.omit(x)
+  if(length(x_clean) < 2) return(NA)
+  var(x_clean)
+}
+
+# Mean
+calc_mean <- function(x) {
+  mean(x, na.rm = TRUE)
+}
+
+
+# Function to calculate ACF at multiple specific lags
+calc_acf_multilags <- function(x, lags = c(1, 10, 100, 1000)) {
+  x_clean <- na.omit(x)
+  if(length(x_clean) < max(lags) + 10) return(rep(NA, length(lags)))
+  
+  tryCatch({
+    acf_result <- acf(x_clean, lag.max = max(lags), plot = FALSE)
+    # Return ACF values at specified lags (+1 because acf includes lag 0)
+    sapply(lags, function(lag) {
+      if(lag + 1 <= length(acf_result$acf)) {
+        acf_result$acf[lag + 1]
+      } else {
+        NA
+      }
+    })
+  }, error = function(e) rep(NA, length(lags)))
+}
+
+# Function to calculate "ACF decay rate" - how fast does correlation drop?
+calc_acf_decay <- function(x, max_lag = 1000) {
+  x_clean <- na.omit(x)
+  if(length(x_clean) < max_lag + 10) return(NA)
+  
+  tryCatch({
+    acf_result <- acf(x_clean, lag.max = max_lag, plot = FALSE)
+    acf_vals <- as.numeric(acf_result$acf[-1])  # Remove lag 0
+    lags <- seq_along(acf_vals)
+    
+    # Fit exponential decay: ACF(lag) ~ exp(-decay_rate * lag)
+    # Only use positive ACF values for fitting
+    valid <- acf_vals > 0 & is.finite(acf_vals)
+    if(sum(valid) < 10) return(NA)
+    
+    fit <- lm(log(acf_vals[valid]) ~ lags[valid])
+    decay_rate <- -coef(fit)[2]  # Negative slope = decay rate
+    
+    return(decay_rate)
+  }, error = function(e) NA)
+}
+
+# Function to find "effective correlation length" - lag where ACF drops below threshold
+calc_correlation_length <- function(x, threshold = 0.1, max_lag = 5000) {
+  x_clean <- na.omit(x)
+  if(length(x_clean) < max_lag + 10) return(NA)
+  
+  tryCatch({
+    acf_result <- acf(x_clean, lag.max = max_lag, plot = FALSE)
+    acf_vals <- as.numeric(acf_result$acf[-1])  # Remove lag 0
+    
+    # Find first lag where ACF drops below threshold
+    below_threshold <- which(abs(acf_vals) < threshold)
+    if(length(below_threshold) > 0) {
+      return(below_threshold[1])
+    } else {
+      return(max_lag)  # Correlation persists beyond max_lag
+    }
+  }, error = function(e) NA)
+}
+
+# ==========================================
+# UPDATED STATISTICS WITH MULTI-LAG ACF
+# ==========================================
+
+time_series_stats_enhanced <- all_data %>%
+  group_by(fitness, evolution, condition) %>%
   summarise(
-    n = n(),
-    mean_mS = mean(mS),
-    mean_mV = mean(mV),
-    mean_product = mean(mS * mV),
-    frac_stable = mean(abs(mS * mV) < 1),
+    # Virulence (v)
+    v_mean = calc_mean(v),
+    v_cv = calc_cv(v),
+    v_var = calc_variance(v),
+    v_spectral_slope = calc_spectral_slope(v),
+    v_acf1 = calc_acf1(v),
+    v_acf10 = calc_acf_multilags(v, lags = 10)[1],
+    v_acf100 = calc_acf_multilags(v, lags = 100)[1],
+    v_acf1000 = calc_acf_multilags(v, lags = 1000)[1],
+    v_acf_decay = calc_acf_decay(v),
+    v_corr_length = calc_correlation_length(v)*100,
+    
+    # Clearance (c)
+    c_mean = calc_mean(s),
+    c_cv = calc_cv(s),
+    c_var = calc_variance(s),
+    c_spectral_slope = calc_spectral_slope(s),
+    c_acf1 = calc_acf1(s),
+    c_acf10 = calc_acf_multilags(s, lags = 10)[1],
+    c_acf100 = calc_acf_multilags(s, lags = 100)[1],
+    c_acf1000 = calc_acf_multilags(s, lags = 1000)[1],
+    c_acf_decay = calc_acf_decay(s),
+    c_corr_length = calc_correlation_length(s)*100,
+    
+    # Pathogen fitness
+    pathFit_mean = calc_mean(pathFit),
+    pathFit_cv = calc_cv(pathFit),
+    pathFit_var = calc_variance(pathFit),
+    pathFit_spectral_slope = calc_spectral_slope(pathFit),
+    pathFit_acf1 = calc_acf1(pathFit),
+    pathFit_acf10 = calc_acf_multilags(pathFit, lags = 10)[1],
+    pathFit_acf100 = calc_acf_multilags(pathFit, lags = 100)[1],
+    pathFit_acf1000 = calc_acf_multilags(pathFit, lags = 1000)[1],
+    pathFit_acf_decay = calc_acf_decay(pathFit),
+    pathFit_corr_length = calc_correlation_length(pathFit)*100,
+    
+    # Host fitness
+    hostFit_mean = calc_mean(hostFit),
+    hostFit_cv = calc_cv(hostFit),
+    hostFit_var = calc_variance(hostFit),
+    hostFit_spectral_slope = calc_spectral_slope(hostFit),
+    hostFit_acf1 = calc_acf1(hostFit),
+    hostFit_acf10 = calc_acf_multilags(hostFit, lags = 10)[1],
+    hostFit_acf100 = calc_acf_multilags(hostFit, lags = 100)[1],
+    hostFit_acf1000 = calc_acf_multilags(hostFit, lags = 1000)[1],
+    hostFit_acf_decay = calc_acf_decay(hostFit),
+    hostFit_corr_length = calc_correlation_length(hostFit)*100,
+    
+    # Omega pathogen
+    omegaPath_mean = calc_mean(omegaPath),
+    omegaPath_cv = calc_cv(omegaPath),
+    omegaPath_var = calc_variance(omegaPath),
+    omegaPath_spectral_slope = calc_spectral_slope(omegaPath),
+    omegaPath_acf1 = calc_acf1(omegaPath),
+    omegaPath_acf10 = calc_acf_multilags(omegaPath, lags = 10)[1],
+    omegaPath_acf100 = calc_acf_multilags(omegaPath, lags = 100)[1],
+    omegaPath_acf1000 = calc_acf_multilags(omegaPath, lags = 1000)[1],
+    omegaPath_acf_decay = calc_acf_decay(omegaPath),
+    omegaPath_corr_length = calc_correlation_length(omegaPath)*100,
+    
+    # Omega host
+    omegaHost_mean = calc_mean(omegaHost),
+    omegaHost_cv = calc_cv(omegaHost),
+    omegaHost_var = calc_variance(omegaHost),
+    omegaHost_spectral_slope = calc_spectral_slope(omegaHost),
+    omegaHost_acf1 = calc_acf1(omegaHost),
+    omegaHost_acf10 = calc_acf_multilags(omegaHost, lags = 10)[1],
+    omegaHost_acf100 = calc_acf_multilags(omegaHost, lags = 100)[1],
+    omegaHost_acf1000 = calc_acf_multilags(omegaHost, lags = 1000)[1],
+    omegaHost_acf_decay = calc_acf_decay(omegaHost),
+    omegaHost_corr_length = calc_correlation_length(omegaHost)*100,
+    
+    n_obs = n(),
     .groups = "drop"
+  )
+
+# Save enhanced statistics
+write.csv(time_series_stats_enhanced, 
+          "time_series_statistics_enhanced.csv", 
+          row.names = FALSE)
+
+# ==========================================
+# 4. VISUALIZATION - COMPARISON PLOTS
+# ==========================================
+
+# Define labels once
+variable_labels <- c(
+  "v" = "italic(v)",
+  "c" = "italic(c)",
+  "pathFit" = "W[P]",
+  "hostFit" = "W[H]",
+  "omegaPath" = "omega[P]",
+  "omegaHost" = "omega[H]"
+)
+
+# Updated variable labels (no tilde needed, just space)
+variable_labels_full <- c(
+  "v" = "italic(v)~'(virulence)'",
+  "c" = "italic(c)~'(clearance)'"
+)
+
+# Reshape for plotting
+stats_long <- time_series_stats_enhanced %>%
+  pivot_longer(
+    cols = -c(fitness, evolution, condition, n_obs),
+    names_to = "metric",
+    values_to = "value"
   ) %>%
+  extract(
+    metric,
+    into = c("variable", "stat_type"),
+    regex = "^(v|c|pathFit|hostFit|omegaPath|omegaHost)_(.+)$"
+  ) %>%
+  mutate(
+    variable = factor(variable, 
+                      levels = c("v", "c", "pathFit", "hostFit", "omegaPath", "omegaHost")),
+    evolution = factor(evolution, 
+                       levels = c("ET-ET", "ERpath-EThost", "ETpath-ERhost", "ER-ER"))
+  )
 
+# Select key metrics and filter to traits only
+key_metrics <- c("mean", "cv", "spectral_slope", "acf1", "corr_length")
 
-cat("• Positive mS: Host increases immunity when facing higher virulence\n")
-cat("• Negative mS: Host decreases immunity when facing higher virulence (paradoxical)\n")
-cat("• Positive mV: Pathogen increases virulence when facing higher immunity (escalation)\n")
-cat("• Negative mV: Pathogen decreases virulence when facing higher immunity (restraint)\n")
-cat("• Stable: |mS × mV| < 1 (system converges to fixed point)\n")
-cat("• Unstable: |mS × mV| ≥ 1 (oscillations or bistability)\n")
+stats_traits <- stats_long %>%
+  filter(
+    variable %in% c("v", "c"),
+    stat_type %in% key_metrics
+  ) %>%
+  mutate(
+    stat_type = factor(
+      stat_type,
+      levels = key_metrics,
+      labels = c(
+        "Mean",
+        "CV",
+        "Noise color",
+        "ACF100",
+        "Memory"
+      )
+    )
+  )
 
+# Check what you have
+table(stats_traits$stat_type)
+
+# ==========================================
+# FIGURE WITH PROPER REFERENCE LINES
+# ==========================================
+
+p_traits_summary <- stats_traits %>%
+  ggplot(aes(x = evolution, y = value, fill = fitness)) +
+  geom_col(position = "dodge", width = 0.7) +
+  
+  # Reference lines for spectral slope (noise color)
+  geom_hline(
+    data = data.frame(
+      stat_type = factor("Noise color", 
+                         levels = levels(stats_traits$stat_type)),
+      yint = c(0, 1, 2)
+    ),
+    aes(yintercept = yint),
+    linetype = "dotted",
+    color = "gray50",
+    alpha = 0.5
+  ) +
+  
+  # Reference line for ACF (zero correlation)
+  geom_hline(
+    data = data.frame(
+      stat_type = factor("ACF100", 
+                         levels = levels(stats_traits$stat_type)),
+      yint = 0
+    ),
+    aes(yintercept = yint),
+    linetype = "dashed",
+    color = "gray50",
+    alpha = 0.5
+  ) +
+  
+  # Faceting
+  facet_grid(
+    stat_type ~ variable,
+    scales = "free_y",
+    labeller = labeller(
+      variable = as_labeller(variable_labels_full, default = label_parsed)
+    )
+  ) +
+  
+  # Styling
+  scale_fill_manual(
+    values = c("minimal" = "#E8E8E8", "regular" = "#404040"),
+    name = "Fitness landscape"
+  ) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n = 3)) +
+  
+  labs(
+    x = "Evolution mode",
+    y = "Value"
+  ) +
+  
+  mytheme +
+  theme(
+    strip.text.y = element_text(size = 13, margin = margin(r = 5, l = 5)),
+    strip.text.x = element_text(size = 13),
+    legend.position = "top",
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 13),
+    panel.spacing = unit(0.6, "lines"),
+    plot.margin = margin(10, 10, 10, 10)
+  )
+
+p_traits_summary
+
+# Save with adequate dimensions
+ggsave(
+  "traits_timeseries_summary.pdf",
+  p_traits_summary,
+  width = 5.5,
+  height = 9)  # Taller to accommodate 5 rows
+
+# ==========================================
+# PLOT REALIZED STATES ON FITNESS LANDSCAPE
+# ==========================================
+# ==========================================
+# CORE FITNESS FUNCTIONS
+# ==========================================
+
+# Regular (acute) fitness
+d_acute <- function(c, v) {
+  d_0 + m_c * (((1+epsilon) * c) / ((1+epsilon) - c)) + 
+    m_v * (((1+epsilon) * v )/ ((1+epsilon) - v))
+}
+
+r_acute <- function(v) v^beta
+
+f_H_acute <- function(c, v) {
+  d <- d_acute(c, v)
+  c / (c + d)
+}
+
+f_P_acute <- function(c, v) {
+  d <- d_acute(c, v)
+  r <- r_acute(v)
+  r / (c + d)
+}
+
+# Minimal fitness (simple polynomial)
+f_H_minimal <- function(c, v) {
+  c * (1 - c) * (1 - v)
+}
+
+f_P_minimal <- function(c, v) {
+  v * (1 - v) * (1 - c)
+}
+
+# ==========================================
+# HELPER: Calculate hex counts for global limits
+# ==========================================
+
+calculate_hex_counts <- function(data, thin_factor = 1, nbins = 100) {
+  data_thin <- data %>%
+    filter(row_number() %% thin_factor == 0) %>%
+    filter(!is.na(v), !is.na(s), v >= 0, v <= 1, s >= 0, s <= 1)
+  
+  if (nrow(data_thin) < 10) return(NULL)
+  
+  hex_data <- hexbin::hexbin(data_thin$v, data_thin$s, xbins = nbins)
+  hex_data@count
+}
+
+# ==========================================
+# CALCULATE GLOBAL LIMITS PER FITNESS MODEL
+# ==========================================
+
+calculate_global_limits <- function(data, fitness_type) {
+  cat(paste("\nCalculating global count range for", fitness_type, "fitness...\n"))
+  
+  all_counts <- list()
+  
+  for (evo_mode in c("ET-ET", "ER-ER", "ERpath-EThost", "ETpath-ERhost")) {
+    data_subset <- data %>% 
+      filter(evolution == evo_mode, fitness == fitness_type)
+    
+    if (nrow(data_subset) > 0) {
+      counts <- calculate_hex_counts(data_subset, thin_factor = 1, nbins = 100)
+      if (!is.null(counts)) {
+        all_counts <- c(all_counts, list(counts))
+      }
+    }
+  }
+  
+  if (length(all_counts) == 0) {
+    return(list(limits = c(1, 1000), breaks = c(1, 10, 100, 1000)))
+  }
+  
+  all_counts_vec <- unlist(all_counts)
+  global_min <- max(1, min(all_counts_vec, na.rm = TRUE))
+  global_max <- max(all_counts_vec, na.rm = TRUE)
+  
+  legend_breaks <- c(1, 10, 100, 1000, 10000)
+  legend_breaks <- legend_breaks[legend_breaks >= global_min & legend_breaks <= global_max * 1.5]
+  
+  cat("Range:", global_min, "to", global_max, "\n")
+  cat("Breaks:", paste(legend_breaks, collapse = ", "), "\n")
+  
+  return(list(limits = c(global_min, global_max), breaks = legend_breaks))
+}
+
+# ==========================================
+# PLOTTING FUNCTION (BACK TO GEOM_HEX)
+# ==========================================
+
+plot_states_on_landscape <- function(data, 
+                                     fitness_type = "regular",
+                                     thin_factor = 1,
+                                     nbins = 100,
+                                     count_limits = c(1, 10000),
+                                     count_breaks = c(1, 10, 100, 1000, 10000),
+                                     show_x_axis = TRUE,
+                                     show_y_axis = TRUE,
+                                     show_x_title = TRUE,
+                                     show_y_title = TRUE,
+                                     show_nash = TRUE) {
+  
+  # Thin data
+  data_thin <- data %>%
+    filter(row_number() %% thin_factor == 0) %>%
+    filter(!is.na(v), !is.na(s), v >= 0, v <= 1, s >= 0, s <= 1)
+  
+  if (nrow(data_thin) < 10) {
+    warning("Insufficient data points")
+    return(ggplot() + theme_void())
+  }
+  
+  # Select fitness functions
+  if (fitness_type == "minimal") {
+    f_H <- f_H_minimal
+    f_P <- f_P_minimal
+    cache_name <- "br_cache_minimal"
+  } else {
+    f_H <- f_H_acute
+    f_P <- f_P_acute
+    cache_name <- "br_cache_regular"
+  }
+  
+  # Create fitness grid
+  v_grid <- seq(0, 1, length.out = 150)
+  c_grid <- seq(0, 1, length.out = 150)
+  
+  fitness_grid <- expand.grid(v = v_grid, c = c_grid) %>%
+    mutate(
+      hostFit = f_H(c, v),
+      pathFit = f_P(c, v)
+    )
+  
+  # Calculate or retrieve cached best response curves
+  if (!exists(cache_name, envir = .GlobalEnv)) {
+    cat(paste("Calculating best response curves for", fitness_type, "...\n"))
+    
+    v_fine <- seq(0.01, 0.99, length.out = 500)
+    c_fine <- seq(0.01, 0.99, length.out = 500)
+    
+    c_opt <- sapply(v_fine, function(v) {
+      optimize(function(c) -f_H(c, v), c(0.01, 0.99))$minimum
+    })
+    
+    v_opt <- sapply(c_fine, function(c) {
+      optimize(function(v) -f_P(c, v), c(0.01, 0.99))$minimum
+    })
+    
+    br_cache <- list(
+      host = tibble(v = v_fine, c = c_opt),
+      path = tibble(c = c_fine, v = v_opt)
+    )
+    
+    assign(cache_name, br_cache, envir = .GlobalEnv)
+  } else {
+    br_cache <- get(cache_name, envir = .GlobalEnv)
+  }
+  
+  # Calculate Nash equilibrium
+  nash_point <- NULL
+  if (show_nash) {
+    v_seq <- seq(0.05, 0.95, length.out = 300)
+    c_opt_seq <- sapply(v_seq, function(v) {
+      optimize(function(c) -f_H(c, v), c(0.01, 0.99))$minimum
+    })
+    v_opt_seq <- sapply(c_opt_seq, function(c) {
+      optimize(function(v) -f_P(c, v), c(0.01, 0.99))$minimum
+    })
+    
+    idx <- which.min(abs(v_opt_seq - v_seq))
+    nash_point <- tibble(v = v_seq[idx], c = c_opt_seq[idx])
+  }
+  
+  # Mean state
+  mean_state <- data_thin %>% 
+    summarise(v = mean(v), s = mean(s))
+  
+  # Build plot
+  p <- ggplot() +
+    # Fitness contours
+    geom_contour(
+      data = fitness_grid, 
+      aes(v, c, z = pathFit), 
+      color = "lightcoral", alpha = 0.3, bins = 12, linewidth = 0.5
+    ) +
+    geom_contour(
+      data = fitness_grid, 
+      aes(v, c, z = hostFit), 
+      color = "steelblue", alpha = 0.3, bins = 12, linewidth = 0.5
+    ) +
+    
+    # Best response curves
+    geom_line(
+      data = br_cache$host, 
+      aes(v, c), 
+      color = "steelblue", linewidth = 1, linetype = "dashed"
+    ) +
+    geom_line(
+      data = br_cache$path, 
+      aes(v, c), 
+      color = "lightcoral", linewidth = 1, linetype = "dashed"
+    ) +
+    
+    # Realized states (hex density) - BACK TO ORIGINAL
+    geom_hex(
+      data = data_thin, 
+      aes(x = v, y = s), 
+      bins = nbins, 
+      alpha = 0.7
+    ) +
+    scale_fill_viridis_c(
+      option = "plasma", 
+      name = "Count", 
+      trans = "log10",
+      limits = count_limits,
+      breaks = count_breaks,
+      labels = scales::comma,
+      oob = scales::squish
+    ) +
+    
+    # Nash equilibrium (black dot)
+    {if (show_nash && !is.null(nash_point)) 
+      geom_point(
+        data = nash_point, 
+        aes(x = v, y = c),
+        size = 4, color = "black", shape = 16
+      )
+    } +
+    
+    # Mean state (gold X)
+    geom_point(
+      data = mean_state, 
+      aes(x = v, y = s), 
+      size = 4, color = "gold", shape = 4, stroke = 1.5
+    ) +
+    
+    # Scales and theme
+    scale_x_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1), labels = c("0", "0.5", "1")) +
+    scale_y_continuous(breaks = c(0, 0.5, 1), limits = c(0, 1), labels = c("0", "0.5", "1")) +
+    coord_fixed() +
+    mytheme +
+    theme(legend.position = "none")
+  
+  # Conditionally show/hide axes
+  if (!show_x_axis) {
+    p <- p + theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+  }
+  if (!show_y_axis) {
+    p <- p + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+  }
+  if (!show_x_title) {
+    p <- p + labs(x = NULL)
+  } else {
+    p <- p + labs(x = "v (virulence)")
+  }
+  if (!show_y_title) {
+    p <- p + labs(y = NULL)
+  } else {
+    p <- p + labs(y = "c (clearance)")
+  }
+  
+  return(p)
+}
+
+# ==========================================
+# CREATE 2×4 COMBINED FIGURE
+# ==========================================
+
+create_combined_landscape_figure <- function(data,
+                                             tag_position_x = 0.08,
+                                             tag_position_y = 0.95,
+                                             tag_size = 18) {
+  
+  cat("\n=== Creating combined 2×4 landscape figure ===\n")
+  
+  # Calculate global limits for each fitness type
+  regular_limits <- calculate_global_limits(data, "regular")
+  minimal_limits <- calculate_global_limits(data, "minimal")
+  
+  # Clear both caches
+  if (exists("br_cache_minimal", envir = .GlobalEnv)) {
+    rm(br_cache_minimal, envir = .GlobalEnv)
+  }
+  if (exists("br_cache_regular", envir = .GlobalEnv)) {
+    rm(br_cache_regular, envir = .GlobalEnv)
+  }
+  
+  # Define evolution modes
+  evo_modes <- c("ET-ET", "ERpath-EThost", "ETpath-ERhost", "ER-ER")
+  
+  # Create all 8 plots
+  plots <- list()
+  
+  # TOP ROW: Regular fitness (A-D)
+  for (i in 1:4) {
+    plots[[i]] <- plot_states_on_landscape(
+      data = data %>% filter(evolution == evo_modes[i], fitness == "regular"),
+      fitness_type = "regular",
+      count_limits = regular_limits$limits,
+      count_breaks = regular_limits$breaks,
+      show_x_axis = FALSE,
+      show_y_axis = (i == 1),
+      show_x_title = FALSE,
+      show_y_title = (i == 1),
+      show_nash = TRUE
+    )
+  }
+  
+  # BOTTOM ROW: Minimal fitness (E-H)
+  for (i in 1:4) {
+    plots[[i + 4]] <- plot_states_on_landscape(
+      data = data %>% filter(evolution == evo_modes[i], fitness == "minimal"),
+      fitness_type = "minimal",
+      count_limits = minimal_limits$limits,
+      count_breaks = minimal_limits$breaks,
+      show_x_axis = TRUE,
+      show_y_axis = (i == 1),
+      show_x_title = (i == 1),
+      show_y_title = (i == 1),
+      show_nash = TRUE
+    )
+  }
+  
+  # Combine with patchwork
+  combined <- (plots[[1]] | plots[[2]] | plots[[3]] | plots[[4]]) /
+    (plots[[5]] | plots[[6]] | plots[[7]] | plots[[8]]) +
+    plot_annotation(
+      caption = "Black dot = Nash equilibrium | Gold X = mean state",
+      tag_levels = 'A',
+      theme = theme(
+        plot.caption = element_text(size = 9, hjust = 0.5, margin = margin(t = 10)),
+        plot.tag = element_text(size = tag_size, face = "bold")
+      )
+    ) +
+    plot_layout(guides = "collect") &
+    theme(
+      legend.position = "right",
+      legend.key.height = unit(2, "cm"),
+      legend.title = element_text(size = 11, face = "bold"),
+      legend.text = element_text(size = 10),
+      plot.tag.position = c(tag_position_x, tag_position_y),
+      plot.tag = element_text(size = tag_size, face = "bold")
+    )
+  
+  return(combined)
+}
+
+# ==========================================
+# GENERATE FIGURE
+# ==========================================
+
+p_combined <- create_combined_landscape_figure(
+  all_data,
+  tag_position_x = 0.01,   # Adjust position
+  tag_position_y = 1.05,   # Adjust position  
+  tag_size = 18            # Bold, larger labels
+)
+
+print(p_combined)
+
+# Save
+ggsave(
+  "landscape_combined_8panel.pdf", 
+  p_combined, 
+  width = 10, 
+  height = 6.6
+)
 
