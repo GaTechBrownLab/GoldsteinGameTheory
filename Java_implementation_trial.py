@@ -241,10 +241,10 @@ USE_GAUSSIAN = False  # ← CHANGE THIS: True=test, False=biology
 # ==================== NEW TOGGLES (as of v1.4) ====================
 # Reactivity controls (ES mode only)
 FIX_HOST_REACTIVITY = False    # If True, force mS=0 (host non-reactive, but bS evolves)
-FIX_PATH_REACTIVITY = False    # If True, force mV=0 (pathogen non-reactive, but bV evolves)
+FIX_PATH_REACTIVITY = True    # If True, force mV=0 (pathogen non-reactive, but bV evolves)
 
 # Fitness model selection
-FITNESS_MODEL = "acute"         # "acute" (current model) or "minimal" (wh=c(1-c)(1-v), wp=v(1-v)(1-c))
+FITNESS_MODEL = "minimal"         # "acute" (current model) or "minimal" (wh=c(1-c)(1-v), wp=v(1-v)(1-c))
 # ==================================================================
 
 # Biological parameters (only used if USE_GAUSSIAN = False)
@@ -271,7 +271,7 @@ seed = 3248232           # ← CHANGE THIS: Any integer for RNG seed
 write_every = 1          # Write every N generations (only in "full" mode)
 
 # Runtime mode
-RUNTIME_MODE = "full"   # "full" or "fast"
+RUNTIME_MODE = "fast"   # "full" or "fast"
 WRITE_EVERY_FAST = 100  # Write every N gens in "fast" mode
 DWELL_MIN = 1e-12       # Minimum dwell time to record (to avoid log(0))
 
