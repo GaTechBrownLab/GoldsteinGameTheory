@@ -261,8 +261,8 @@ Ne_P = 1.0e6
 # Mutation parameters
 host_vs_pathogen_mut_rate = 0.01  # γ = pathogen mutation rate / host mutation rate
 num_step_bins = 51  # 51 per paper; increase to 101 for smoother but slower
-std_dev_move = 0.01 # 0.01 per paper; increase to 0.1 if traits get stuck
-std_dev_angle = 0.01 * math.pi # radians; increase to 0.1*pi if stuck
+std_dev_move = 0.1 # 0.01 per paper; increase to 0.1 if traits get stuck
+std_dev_angle = 0.1 * math.pi # radians; increase to 0.1*pi if stuck
 
 # Simulation parameters
 burn_in_gens = 10_000    # Generations to skip before recording stats
