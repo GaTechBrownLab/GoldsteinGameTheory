@@ -241,11 +241,26 @@ USE_GAUSSIAN = False  # ← CHANGE THIS: True=test, False=biology
 # ==================== NEW TOGGLES (as of v1.4) ====================
 # Reactivity controls (ES mode only)
 FIX_HOST_REACTIVITY = False    # If True, force mS=0 (host non-reactive, but bS evolves)
-FIX_PATH_REACTIVITY = True    # If True, force mV=0 (pathogen non-reactive, but bV evolves)
+FIX_PATH_REACTIVITY = False    # If True, force mV=0 (pathogen non-reactive, but bV evolves)
+
+FREEZE_HOST_TRAIT = False
+FROZEN_HOST_VALUE = 0.5
+
+FREEZE_PATH_TRAIT = False
+FROZEN_PATH_VALUE = 0.5
 
 # Fitness model selection
-FITNESS_MODEL = "minimal"         # "acute" (current model) or "minimal" (wh=c(1-c)(1-v), wp=v(1-v)(1-c))
+FITNESS_MODEL = "paper"         # "acute" (current model) or "minimal" (wh=c(1-c)(1-v), wp=v(1-v)(1-c))
 # ==================================================================
+
+# Paper paramteters, Taylor et al. 2006
+b_paper  = 1.0    # host adult birth rate (b)
+m0_paper = 1.0    # baseline adult mortality (m0)
+n_paper  = 0.75   # tradeoff exponent n in v**n
+
+USE_BOUNDED_TRAITS = False
+TAYLOR_TRAIT_MIN   = 1e-3
+TAYLOR_TRAIT_MAX   = 50.0
 
 # Biological parameters (only used if USE_GAUSSIAN = False)
 nS = 0.1   # Cost parameter for host clearance rate
@@ -261,8 +276,8 @@ Ne_P = 1.0e6
 # Mutation parameters
 host_vs_pathogen_mut_rate = 0.01  # γ = pathogen mutation rate / host mutation rate
 num_step_bins = 51  # 51 per paper; increase to 101 for smoother but slower
-std_dev_move = 0.1 # 0.01 per paper; increase to 0.1 if traits get stuck
-std_dev_angle = 0.1 * math.pi # radians; increase to 0.1*pi if stuck
+std_dev_move = 0.01 # 0.01 per paper; increase to 0.1 if traits get stuck
+std_dev_angle = 0.01 * math.pi # radians; increase to 0.1*pi if stuck
 
 # Simulation parameters
 burn_in_gens = 10_000    # Generations to skip before recording stats
@@ -302,6 +317,16 @@ def _postproc_sizes():
 
 def clamp01(x: float) -> float:
     return 0.0 if x < 0.0 else (1.0 if x > 1.0 else x)
+
+def clamp_trait(x: float) -> float:
+    """
+    Trait clamp:
+    - If traits are bounded, behave like clamp01
+    - If unbounded, just keep them positive and below a large max
+    """
+    if USE_BOUNDED_TRAITS:
+        return clamp01(x)
+    return max(TAYLOR_TRAIT_MIN, min(x, TAYLOR_TRAIT_MAX))
 
 def safe_tan(theta: float) -> float:
     half_pi = 0.5 * math.pi
@@ -372,6 +397,35 @@ def path_fitness_biological(v: float, s: float) -> float:
     tr = v**beta
     return tr / (s + m)
 
+# -------- TAYLOR ET AL. 2006 FITNESS MODEL --------
+def host_fitness_paper(v: float, s: float) -> float:
+    """
+    Exact host fitness from Taylor et al.:
+        H(v,c) = [c / (v + c)] * [b / (m0 + c)]
+    where:
+      - v = virulence
+      - c = clearance (here: s)
+    """
+    c = s
+    # Avoid division by zero
+    denom1 = v + c
+    denom2 = m0_paper + c
+    if denom1 <= 1e-12 or denom2 <= 1e-12:
+        return 0.0
+    return (c / denom1) * (b_paper / denom2)
+
+
+def path_fitness_paper(v: float, s: float) -> float:
+    """
+    Exact pathogen fitness from Taylor et al.:
+        P(v,c) = v^n / (v + c)
+    with tradeoff β = v^n.
+    """
+    c = s
+    denom = v + c
+    if denom <= 1e-12:
+        return 0.0
+    return (v ** n_paper) / denom
 
 # -------- MINIMAL FITNESS MODEL --------
 def host_fitness_minimal(v: float, s: float) -> float:
@@ -422,8 +476,11 @@ def host_fitness(v: float, s: float) -> float:
         return host_fitness_gaussian(v, s)
     elif FITNESS_MODEL == "minimal":
         return host_fitness_minimal(v, s)
+    elif FITNESS_MODEL == "paper":
+        return host_fitness_paper(v, s)
     else:  # "acute"
         return host_fitness_biological(v, s)
+
 
 def path_fitness(v: float, s: float) -> float:
     """
@@ -434,9 +491,10 @@ def path_fitness(v: float, s: float) -> float:
         return path_fitness_gaussian(v, s)
     elif FITNESS_MODEL == "minimal":
         return path_fitness_minimal(v, s)
+    elif FITNESS_MODEL == "paper":
+        return path_fitness_paper(v, s)
     else:  # "acute"
         return path_fitness_biological(v, s)
-
 
 # =========================
 # Helper Functions
@@ -634,32 +692,46 @@ class Simulation:
         self.interior_count_total = 0
         self.boundary_count_total = 0
 
-        self.v = self.rng.random()
-        self.s = self.rng.random()
+        if FITNESS_MODEL == "paper" and not USE_BOUNDED_TRAITS:
+            taylor_v_star = 9.0
+            taylor_c_star = 3.0
+            self.v = taylor_v_star * (0.5 + self.rng.random())
+            self.s = taylor_c_star * (0.5 + self.rng.random())
+        else:
+            self.v = self.rng.random()
+            self.s = self.rng.random()
+
+        if FREEZE_PATH_TRAIT:
+            self.v = FROZEN_PATH_VALUE
+        if FREEZE_HOST_TRAIT:
+            self.s = FROZEN_HOST_VALUE
 
         if self.es:
-            # Initialize angles (will be set to 0 if reactivity is fixed)
-            if FIX_PATH_REACTIVITY:
+            # Path slope
+            if FIX_PATH_REACTIVITY or FREEZE_PATH_TRAIT:
                 self.v_angle = 0.0
                 self.mV = 0.0
             else:
                 self.v_angle = wrap_angle(self.rng.uniform(-math.pi/2 + 0.2, math.pi/2 - 0.2))
                 self.mV = safe_tan(self.v_angle)
-            
-            if FIX_HOST_REACTIVITY:
+
+            # Host slope
+            if FIX_HOST_REACTIVITY or FREEZE_HOST_TRAIT:
                 self.s_angle = 0.0
                 self.mS = 0.0
             else:
                 self.s_angle = wrap_angle(self.rng.uniform(-math.pi/2 + 0.2, math.pi/2 - 0.2))
                 self.mS = safe_tan(self.s_angle)
-            
-            # Set intercepts based on current (v,s) and slopes
-            self.bV = self.v - self.mV * self.s
-            self.bS = self.s - self.mS * self.v
+
+            # Intercepts
+            self.bV = self.v if FREEZE_PATH_TRAIT else (self.v - self.mV * self.s)
+            self.bS = self.s if FREEZE_HOST_TRAIT else (self.s - self.mS * self.v)
         else:
             self.v_angle = 0.0; self.s_angle = 0.0
             self.mV = 0.0; self.mS = 0.0
-            self.bV = self.v;  self.bS = self.s
+            self.bV = self.v
+            self.bS = self.s
+
 
         self.host_fit = host_fitness(self.v, self.s)
         self.path_fit = path_fitness(self.v, self.s)
@@ -676,6 +748,9 @@ class Simulation:
         neutral_count = 0
         interior_count = 0
         
+        if FREEZE_HOST_TRAIT:
+            return proposals, cum, neutral_count
+
         # Determine if we should mutate angles
         if FIX_HOST_REACTIVITY:
             # Only mutate position (bS), keep mS=0
@@ -741,6 +816,9 @@ class Simulation:
         neutral_count = 0
         interior_count = 0
         
+        if FREEZE_PATH_TRAIT:
+            return proposals, cum, neutral_count
+
         # Determine if we should mutate angles
         if FIX_PATH_REACTIVITY:
             # Only mutate position (bV), keep mV=0
@@ -800,9 +878,13 @@ class Simulation:
         proposals: List[Tuple[float, dict]] = []
         cum = 0.0
         neutral_count = 0
-        
+
+        if FREEZE_HOST_TRAIT:
+            return proposals, cum, neutral_count
+        step_scale = std_dev_move if USE_BOUNDED_TRAITS else std_dev_move * 5.0
         for dz in self.step_bins:
-            v2, s2 = self.v, clamp01(self.s + std_dev_move * dz)
+            v2, s2 = self.v, clamp_trait(self.s + step_scale * dz)
+            v2, s2 = clamp_trait(self.v + step_scale * dz), self.s
             neutral_count += 1
             new_fit = host_fitness(v2, s2)
             s_coef = selection_coeff(new_fit, self.host_fit)
@@ -822,8 +904,13 @@ class Simulation:
         cum = 0.0
         neutral_count = 0
         
+        if FREEZE_PATH_TRAIT:
+            return proposals, cum, neutral_count
+        step_scale = std_dev_move if USE_BOUNDED_TRAITS else std_dev_move * 5.0
+
         for dz in self.step_bins:
-            v2, s2 = clamp01(self.v + std_dev_move * dz), self.s
+            v2, s2 = self.v, clamp_trait(self.s + step_scale * dz)
+            v2, s2 = clamp_trait(self.v + step_scale * dz), self.s
             neutral_count += 1
             new_fit = path_fitness(v2, s2)
             s_coef = selection_coeff(new_fit, self.path_fit)
