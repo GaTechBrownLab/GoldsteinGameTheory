@@ -71,3 +71,5 @@ postproc/
 
 # old files 
 old/
+
+.gitignore
