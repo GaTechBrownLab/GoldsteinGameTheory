@@ -72,8 +72,19 @@ def run_single_condition(
     diploid: bool = False,
     fix_host_trait: float = None,
     fix_path_trait: float = None,
+    gamma: float = None,
 ) -> str:
-    """Run a single experimental condition."""
+    """Run a single experimental condition.
+    
+    Parameters
+    ----------
+    gamma : float, optional
+        Mutation rate asymmetry (prob_host_mutate).
+        0.01 = pathogen-fast (default in Goldstein 2020)
+        0.50 = equal rates
+        0.99 = host-fast (reversed asymmetry)
+        None = use simulation.py default (0.01).
+    """
     
 
     # Import the unified simulation module
@@ -93,6 +104,8 @@ def run_single_condition(
         tags.append(f"sigma{sigma}")
     if diploid:
         tags.append("diploid")
+    if gamma is not None and abs(gamma - 0.01) > 1e-6:
+        tags.append(f"gamma{gamma}")
     if fix_host_trait is not None:
         tags.append(f"fixH{fix_host_trait}")
     if fix_path_trait is not None:
@@ -125,6 +138,8 @@ def run_single_condition(
     sim.FIX_PATH_TRAIT = fix_path_trait
     if sigma is not None:
         sim.std_dev_move = sigma
+    if gamma is not None:
+        sim.prob_host_mutate = gamma
     sim.max_gens = params["max_gens"]
     sim.burn_in_gens = params["burn_in_gens"]
     sim.seed = params["seed_base"]
@@ -169,6 +184,8 @@ def run_single_condition(
     print(f"  Fitness model: {fitness_model}")
     print(f"  Trait domain: [{sim.TRAIT_MIN}, {sim.TRAIT_MAX}]")
     print(f"  Step size (σ): {sim.std_dev_move}")
+    print(f"  Mutation asymmetry (γ): {sim.prob_host_mutate}"
+          f"  ({'pathogen-fast' if sim.prob_host_mutate < 0.5 else 'host-fast' if sim.prob_host_mutate > 0.5 else 'equal'})")
     if diploid:
         print(f"  Kimura: DIPLOID (4Ns)")
     if fix_host_trait is not None:
@@ -203,6 +220,7 @@ def run_all_conditions(
     diploid: bool = False,
     fix_host_trait: float = None,
     fix_path_trait: float = None,
+    gamma: float = None,
 ) -> dict:
     """Run all 4 conditions for a fitness model."""
     results = {}
@@ -218,8 +236,79 @@ def run_all_conditions(
             diploid=diploid,
             fix_host_trait=fix_host_trait,
             fix_path_trait=fix_path_trait,
+            gamma=gamma,
         )
         results[condition] = output_csv
+    
+    return results
+
+
+def run_gamma_sweep(
+    fitness_model: str,
+    params: dict,
+    gammas: list = None,
+    conditions: list = None,
+    output_base: str = "results",
+    sigma: float = 0.1,
+    diploid: bool = True,
+) -> dict:
+    """Sweep mutation rate asymmetry (gamma) across conditions.
+    
+    This probes whether fast/slow dynamics shape the distribution of 
+    realized phenotypes, or whether volatility is intrinsic to ER status.
+    
+    Parameters
+    ----------
+    gammas : list of float
+        Values of prob_host_mutate to sweep.
+        Default: [0.01, 0.1, 0.5, 0.9, 0.99]
+    conditions : list of str, optional
+        Which conditions to run. Default: all 4.
+        For a focused experiment, use ["ERhost_ERpath"] or
+        ["EThost_ERpath", "ERhost_ETpath", "ERhost_ERpath"].
+    """
+    if gammas is None:
+        gammas = [0.01, 0.1, 0.5, 0.9, 0.99]
+    if conditions is None:
+        conditions = list(CONDITIONS.keys())
+    
+    results = {}
+    total = len(gammas) * len(conditions)
+    done = 0
+    
+    print(f"\n{'#'*60}")
+    print(f"# Gamma Sweep: {fitness_model}")
+    print(f"# γ values: {gammas}")
+    print(f"# Conditions: {conditions}")
+    print(f"# Total runs: {total}")
+    print(f"{'#'*60}")
+    
+    for gamma in gammas:
+        for cond_name in conditions:
+            if cond_name not in CONDITIONS:
+                print(f"  WARNING: Unknown condition '{cond_name}', skipping")
+                continue
+            host_reactive, path_reactive = CONDITIONS[cond_name]
+            done += 1
+            print(f"\n  [{done}/{total}] γ={gamma}, {cond_name}")
+            
+            output_csv = run_single_condition(
+                fitness_model=fitness_model,
+                host_reactive=host_reactive,
+                path_reactive=path_reactive,
+                params=params,
+                output_base=output_base,
+                sigma=sigma,
+                diploid=diploid,
+                gamma=gamma,
+            )
+            results[(gamma, cond_name)] = output_csv
+    
+    print(f"\n{'='*60}")
+    print(f"GAMMA SWEEP COMPLETE — {done} runs")
+    print(f"{'='*60}")
+    for (g, c), path in results.items():
+        print(f"  γ={g:5.3f}  {c:20s}  →  {path}")
     
     return results
 
@@ -250,6 +339,12 @@ Diploid:
   python run_experiments.py -f acute --diploid 
 Pin host trait:
   python run_experiments.py -f acute -c EThost_ETpath --fix-host 0.5
+Single gamma (host-fast):
+  python run_experiments.py -f acute --gamma 0.99 --diploid
+Gamma sweep (all conditions):
+  python run_experiments.py -f acute --gamma-sweep 0.01,0.5,0.99 --diploid
+Gamma sweep (ER-ER only):
+  python run_experiments.py -f acute -c ERhost_ERpath --gamma-sweep 0.01,0.1,0.5,0.9,0.99 --diploid
         """
     )
     
@@ -272,6 +367,12 @@ Pin host trait:
                         help="Pin host clearance at this value (e.g. 0.5)")
     parser.add_argument("--fix-path", type=float, default=None,
                         help="Pin pathogen virulence at this value (e.g. 0.3)")
+    parser.add_argument("--gamma", type=float, default=None,
+                        help="Mutation rate asymmetry (prob_host_mutate). "
+                             "0.01=pathogen-fast (default), 0.5=equal, 0.99=host-fast")
+    parser.add_argument("--gamma-sweep", type=str, default=None,
+                        help="Comma-separated gamma values to sweep, "
+                             "e.g. 0.01,0.1,0.5,0.9,0.99")
    
     args = parser.parse_args()
     
@@ -296,6 +397,11 @@ Pin host trait:
     if args.step_sizes:
         sigmas = [float(x.strip()) for x in args.step_sizes.split(",")]
     
+    # Parse gamma sweep
+    gammas = None
+    if args.gamma_sweep:
+        gammas = [float(x.strip()) for x in args.gamma_sweep.split(",")]
+    
     print(f"\n{'#'*60}")
     print(f"# Goldstein Coevolution Experiment Runner")
     print(f"{'#'*60}")
@@ -305,40 +411,61 @@ Pin host trait:
         print(f"Kimura: DIPLOID (4Ns)")
     if len(sigmas) > 1 or sigmas[0] is not None:
         print(f"Step sizes: {sigmas}")
+    if args.gamma is not None:
+        print(f"Mutation asymmetry (γ): {args.gamma}")
+    if gammas is not None:
+        print(f"Gamma sweep: {gammas}")
     if args.fix_host is not None:
         print(f"Host pinned at s={args.fix_host}")
     if args.fix_path is not None:
         print(f"Path pinned at v={args.fix_path}")
     
-    for sigma in sigmas:
-        if args.condition:
-            host_reactive, path_reactive = CONDITIONS[args.condition]
-            run_single_condition(
-                fitness_model=args.fitness,
-                host_reactive=host_reactive,
-                path_reactive=path_reactive,
-                params=params,
-                output_base=args.output,
-                sigma=sigma,
-                diploid=args.diploid,
-                fix_host_trait=args.fix_host,
-                fix_path_trait=args.fix_path,
-            )
-        else:
-            results = run_all_conditions(
+    # === Gamma sweep mode ===
+    if gammas is not None:
+        conditions_to_run = [args.condition] if args.condition else None
+        for sigma in sigmas:
+            run_gamma_sweep(
                 fitness_model=args.fitness,
                 params=params,
+                gammas=gammas,
+                conditions=conditions_to_run,
                 output_base=args.output,
-                sigma=sigma,
+                sigma=sigma if sigma is not None else 0.1,
                 diploid=args.diploid,
-                fix_host_trait=args.fix_host,
-                fix_path_trait=args.fix_path,
             )
-            print(f"\n{'='*60}")
-            print("COMPLETE - Output files:")
-            print(f"{'='*60}")
-            for cond, path in results.items():
-                print(f"  {cond}: {path}")
+    else:
+        # === Standard mode (with optional single gamma) ===
+        for sigma in sigmas:
+            if args.condition:
+                host_reactive, path_reactive = CONDITIONS[args.condition]
+                run_single_condition(
+                    fitness_model=args.fitness,
+                    host_reactive=host_reactive,
+                    path_reactive=path_reactive,
+                    params=params,
+                    output_base=args.output,
+                    sigma=sigma,
+                    diploid=args.diploid,
+                    fix_host_trait=args.fix_host,
+                    fix_path_trait=args.fix_path,
+                    gamma=args.gamma,
+                )
+            else:
+                results = run_all_conditions(
+                    fitness_model=args.fitness,
+                    params=params,
+                    output_base=args.output,
+                    sigma=sigma,
+                    diploid=args.diploid,
+                    fix_host_trait=args.fix_host,
+                    fix_path_trait=args.fix_path,
+                    gamma=args.gamma,
+                )
+                print(f"\n{'='*60}")
+                print("COMPLETE - Output files:")
+                print(f"{'='*60}")
+                for cond, path in results.items():
+                    print(f"  {cond}: {path}")
     
     print("\nDone!")
 

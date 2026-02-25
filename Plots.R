@@ -212,7 +212,7 @@ TRAIT_DOMAIN <- list(
   acute   = c(0.001, 0.999),
   chronic = c(0.001, 0.999),
   minimal = c(0.001, 0.999),
-  taylor  = c(0.01,  20.0)     # Nash ≈ (v*=9, c*=3)
+  taylor  = c(0.01,  30.0)     # Nash ≈ (v*=9, c*=3)
 )
 
 # Clean axis limits for plotting (not the simulation clamp bounds)
@@ -220,7 +220,7 @@ TRAIT_DISPLAY <- list(
   acute   = c(0, 1),
   chronic = c(0, 1),
   minimal = c(0, 1),
-  taylor  = c(0, 12)
+  taylor  = c(0, 30)
 )
 
 # ============================================================================
@@ -328,9 +328,7 @@ thin_for_plot <- function(df, every = NULL, max_pts = 2000) {
   }
   if (every <= 1) return(out)
   out %>%
-    mutate(.row = row_number()) %>%
-    filter(.row %% every == 0) %>%
-    select(-.row)
+    slice(seq(every, n(), by = every))
 }
 
 # --- Numerical gradient ---
@@ -413,6 +411,7 @@ discover_experiments <- function(results_root = "results", refresh = FALSE) {
         host_reactive = cfg$host_reactive %||% NA,
         path_reactive = cfg$path_reactive %||% NA,
         std_dev_move  = cfg$std_dev_move %||% NA_real_,
+        gamma         = cfg$prob_host_mutate %||% NA_real_,
         diploid       = isTRUE(cfg$DIPLOID_KIMURA),
         fix_host      = if (is.null(cfg$FIX_HOST_TRAIT) || 
                             isFALSE(cfg$FIX_HOST_TRAIT)) NA_real_ 
@@ -570,11 +569,12 @@ load_sim <- function(model, scenario, min_gen = MIN_GEN_CUTOFF,
   if (!is.null(diploid_filter))
     subset <- subset %>% filter(diploid == diploid_filter)
 
-  # If still multiple matches, pick best: default sigma, longest run
+  # If still multiple matches, pick best: default sigma, default gamma, longest run
   if (nrow(subset) > 1) {
     subset <- subset %>%
       arrange(
         abs(std_dev_move - 0.1),                # prefer σ ≈ 0.1
+        abs(ifelse(is.na(gamma), 0.01, gamma) - 0.01),  # prefer default γ ≈ 0.01
         desc(max_gens)                          # prefer longer
       ) %>%
       slice(1)
@@ -2057,7 +2057,7 @@ scale_color_condition <- function(...)
 
 # --- Shared helper: load experiments from catalog ---
 load_all_conditions <- function(model_name, sigma = 0.1, diploid = NULL,
-                                include_pinned = FALSE) {
+                                include_pinned = FALSE, gamma_filter = 0.01) {
   cat <- discover_experiments()
 
   # Filter to model
@@ -2069,6 +2069,12 @@ load_all_conditions <- function(model_name, sigma = 0.1, diploid = NULL,
   # Sigma filter
   if (!is.null(sigma)) {
     sub <- sub %>% filter(abs(std_dev_move - sigma) < 1e-6)
+  }
+
+  # Gamma filter — default to 0.01 to exclude gamma-sweep runs
+  # NA gamma means legacy config (default 0.01), so include those too
+  if (!is.null(gamma_filter)) {
+    sub <- sub %>% filter(is.na(gamma) | abs(gamma - gamma_filter) < 1e-6)
   }
 
   # Exclude or include pinned runs
@@ -2623,7 +2629,7 @@ fig_boundary_occupancy <- function(model_name = "acute",
 
   # Pivot to long for plotting
   occ_long <- occ %>%
-    select(all_of(grp_cols), host_lower, host_upper,
+    dplyr::select(all_of(grp_cols), host_lower, host_upper,
            path_lower, path_upper) %>%
     pivot_longer(-all_of(grp_cols),
                  names_to = "boundary", values_to = "fraction") %>%
@@ -2756,27 +2762,732 @@ fig_trait_density <- function(model_name = "acute",
   combined
 }
 
+#-------
+# ============================================================================
+# §11  Gamma Sweep -- Mutation Rate Asymmetry Comparison
+# ============================================================================
+
+#' Load all gamma-sweep experiments for a model
+#' Returns a data frame with gamma as an additional column
+load_gamma_sweep <- function(model_name, sigma = 0.1, diploid = TRUE,
+                             conditions = NULL, max_pts = 2000) {
+  cat <- discover_experiments() %>%
+    filter(fitness == model_name,
+           is.na(fix_host), is.na(fix_path))
+  
+  if (!is.null(sigma))   cat <- cat %>% filter(abs(std_dev_move - sigma) < 1e-6)
+  if (!is.null(diploid)) cat <- cat %>% filter(diploid == !!diploid)
+  if (!is.null(conditions)) cat <- cat %>% filter(condition %in% conditions)
+  
+  # Need multiple gamma values
+  if (n_distinct(cat$gamma) < 2) {
+    warning("Only ", n_distinct(cat$gamma), " gamma value(s) found — ",
+            "run a gamma sweep first.\n",
+            "  Available gammas: ", paste(unique(cat$gamma), collapse = ", "))
+    return(tibble())
+  }
+  
+  cat("  Loading gamma sweep: ", model_name, 
+      " (", n_distinct(cat$gamma), " gamma values × ",
+      n_distinct(cat$condition), " conditions)\n")
+  
+  cond_labels <- c(
+    "EThost_ETpath" = "ET / ET",
+    "EThost_ERpath" = "ET host / ER path",
+    "ERhost_ETpath" = "ER host / ET path",
+    "ERhost_ERpath" = "ER / ER"
+  )
+  cond_order <- c("ET / ET", "ET host / ER path",
+                  "ER host / ET path", "ER / ER")
+  
+  all_df <- load_sim_set(cat) %>%
+    mutate(
+      scenario = factor(cond_labels[condition], levels = cond_order),
+      gamma_label = sprintf("\u03b3 = %g", gamma),
+      gamma_desc = case_when(
+        gamma < 0.1  ~ "path-fast",
+        gamma > 0.9  ~ "host-fast",
+        abs(gamma - 0.5) < 0.05 ~ "equal",
+        gamma < 0.5  ~ "path-biased",
+        TRUE         ~ "host-biased"
+      )
+    )
+  
+  # Order gamma labels by value
+  gamma_order <- sort(unique(all_df$gamma))
+  all_df$gamma_label <- factor(
+    all_df$gamma_label,
+    levels = sprintf("\u03b3 = %g", gamma_order)
+  )
+  
+  all_df
+}
+
+
+#' Figure: Gamma sweep time series grid
+#' Rows = gamma values, Columns = conditions
+#' Shows v and s in separate grids
+fig_gamma_timeseries <- function(model_name = "acute",
+                                  sigma = 0.1, diploid = TRUE,
+                                  conditions = NULL,
+                                  max_pts = 100,
+                                  width = NULL, height = NULL,
+                                  filename = "Gamma_sweep_timeseries") {
+  
+  all_df <- load_gamma_sweep(model_name, sigma, diploid, conditions, max_pts)
+  if (nrow(all_df) == 0) return(invisible(NULL))
+  
+  thin_df <- all_df %>%
+    group_by(gamma_label, scenario) %>%
+    group_modify(~ thin_for_plot(.x, max_pts = max_pts)) %>%
+    ungroup()
+  
+  yax <- auto_trait_axis(model_name)
+  
+  p_v <- ggplot(thin_df, aes(gen, v, color = scenario)) +
+    geom_line(alpha = 0.7, linewidth = 0.3) +
+    facet_grid(gamma_label ~ scenario) +
+    scale_y_continuous(limits = yax$lims, breaks = yax$breaks) +
+    scale_color_condition() +
+    labs(y = expression(italic(v) ~ "(virulence)"), x = NULL,
+         title = paste0(model_name, " — virulence across \u03b3")) +
+    mytheme +
+    theme(legend.position = "none",
+          strip.text = element_text(size = 9))
+  
+  p_s <- ggplot(thin_df, aes(gen, s, color = scenario)) +
+    geom_line(alpha = 0.7, linewidth = 0.3) +
+    facet_grid(gamma_label ~ scenario) +
+    scale_y_continuous(limits = yax$lims, breaks = yax$breaks) +
+    scale_color_condition() +
+    labs(y = expression(italic(c) ~ "(clearance)"), x = "Evolutionary time",
+         title = paste0(model_name, " — clearance across \u03b3")) +
+    mytheme +
+    theme(legend.position = "none",
+          strip.text = element_text(size = 9))
+  
+  combined <- p_v / p_s
+  
+  if (!is.null(filename)) {
+    n_gammas <- n_distinct(thin_df$gamma_label)
+    n_conds  <- n_distinct(thin_df$scenario)
+    w <- if (!is.null(width)) width else max(8, 2.5 * n_conds)
+    h <- if (!is.null(height)) height else max(8, 1.5 * n_gammas * 2 + 2)
+    ggsave(paste0("figures/", filename, ".pdf"), combined, width = w, height = h)
+    ggsave(paste0("figures/", filename, ".png"), combined, width = w, height = h)
+    cat("Saved:", filename, "\n")
+  }
+  combined
+}
+
+
+#' Figure: Gamma sweep summary statistics
+#' Compares CV, realized step sizes, and neutral drift fraction across gamma values
+fig_gamma_summary <- function(model_name = "acute",
+                               sigma = 0.1, diploid = TRUE,
+                               conditions = NULL,
+                               width = NULL, height = NULL,
+                               filename = "Gamma_sweep_summary") {
+  
+  all_df <- load_gamma_sweep(model_name, sigma, diploid, conditions)
+  if (nrow(all_df) == 0) return(invisible(NULL))
+  
+  # --- Panel 1: Realized step sizes by gamma and condition ---
+  steps <- all_df %>%
+    group_by(gamma_label, scenario) %>%
+    group_modify(~ calc_step_sizes(.x)) %>%
+    ungroup() %>%
+    pivot_longer(c(delta_v, delta_s),
+                 names_to = "trait", values_to = "step") %>%
+    mutate(trait = ifelse(trait == "delta_v", "|Δv|", "|Δc|"))
+  
+  p_steps <- ggplot(steps, aes(x = gamma_label, y = step, fill = scenario)) +
+    geom_violin(alpha = 0.4, scale = "width", position = position_dodge(0.8)) +
+    geom_boxplot(width = 0.15, outlier.size = 0.2, alpha = 0.8,
+                 position = position_dodge(0.8)) +
+    facet_wrap(~ trait, scales = "free_y") +
+    scale_y_log10() +
+    scale_fill_condition() +
+    labs(x = NULL, y = "Realized step size (log)",
+         title = "Realized step sizes") +
+    mytheme +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1),
+          legend.position = "bottom")
+  
+  # --- Panel 2: CV of traits by gamma and condition ---
+  cv_df <- all_df %>%
+    group_by(gamma_label, scenario) %>%
+    summarise(
+      cv_v = sd(v, na.rm = TRUE) / mean(v, na.rm = TRUE),
+      cv_s = sd(s, na.rm = TRUE) / mean(s, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    pivot_longer(c(cv_v, cv_s), names_to = "trait", values_to = "cv") %>%
+    mutate(trait = ifelse(trait == "cv_v", "CV(v)", "CV(c)"))
+  
+  p_cv <- ggplot(cv_df, aes(x = gamma_label, y = cv, 
+                             fill = scenario, group = scenario)) +
+    geom_col(position = position_dodge(0.8), width = 0.7, alpha = 0.8) +
+    facet_wrap(~ trait) +
+    scale_fill_condition() +
+    labs(x = NULL, y = "Coefficient of variation",
+         title = "Trait variability") +
+    mytheme +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1),
+          legend.position = "none")
+  
+  # --- Panel 3: Neutral drift fraction (ER conditions only) ---
+  er_cols <- c("bS", "mS", "bV", "mV")
+  has_er <- all(er_cols %in% names(all_df))
+  
+  if (has_er) {
+    drift <- all_df %>%
+      filter(!is.na(bS) & !is.na(mS) & !is.na(bV) & !is.na(mV)) %>%
+      group_by(gamma_label, scenario) %>%
+      group_modify(~ {
+        events <- identify_neutral_events(.x)
+        if (nrow(events) == 0) return(tibble(neutral_frac = NA_real_))
+        tibble(neutral_frac = mean(events$is_neutral, na.rm = TRUE))
+      }) %>%
+      ungroup() %>%
+      filter(!is.na(neutral_frac))
+    
+    if (nrow(drift) > 0) {
+      p_drift <- ggplot(drift, aes(x = gamma_label, y = neutral_frac, 
+                                    fill = scenario)) +
+        geom_col(position = position_dodge(0.8), width = 0.7, alpha = 0.8) +
+        scale_fill_condition() +
+        labs(x = NULL, y = "Fraction neutral",
+             title = "Neutral drift events") +
+        mytheme +
+        theme(axis.text.x = element_text(angle = 30, hjust = 1),
+              legend.position = "none")
+      
+      combined <- (p_steps / (p_cv | p_drift)) +
+        plot_annotation(
+          title = paste0(model_name, " — mutation rate asymmetry (\u03b3) sweep"),
+          tag_levels = "A"
+        )
+    } else {
+      combined <- (p_steps / p_cv) +
+        plot_annotation(
+          title = paste0(model_name, " — mutation rate asymmetry (\u03b3) sweep"),
+          tag_levels = "A"
+        )
+    }
+  } else {
+    combined <- (p_steps / p_cv) +
+      plot_annotation(
+        title = paste0(model_name, " — mutation rate asymmetry (\u03b3) sweep"),
+        tag_levels = "A"
+      )
+  }
+  
+  if (!is.null(filename)) {
+    w <- if (!is.null(width)) width else 12
+    h <- if (!is.null(height)) height else 10
+    ggsave(paste0("figures/", filename, ".pdf"), combined, width = w, height = h)
+    ggsave(paste0("figures/", filename, ".png"), combined, width = w, height = h)
+    cat("Saved:", filename, "\n")
+  }
+  combined
+}
+
+
+# ============================================================================
+# GAMMA SWEEP FIGURES (mutation rate asymmetry)
+# ============================================================================
+# Run AFTER completing gamma sweep experiments:
+#   python run_experiments.py -f acute --gamma-sweep 0.01,0.1,0.5,0.9,0.99 --diploid
+#
+# Then refresh catalog and generate figures:
+#   refresh_catalog()
+#   fig_gamma_timeseries("acute", filename = "Gamma_timeseries_acute")
+#   fig_gamma_summary("acute", filename = "Gamma_summary_acute")
+#
+# For focused ER-ER only comparison:
+#   fig_gamma_timeseries("acute", conditions = c("ERhost_ERpath"),
+#                        filename = "Gamma_timeseries_acute_ERER")
+# ============================================================================
+# GAMMA SWEEP — Additional Analysis Functions
+# ============================================================================
+# Add these to Plots.R (after the existing fig_gamma_summary function)
+#
+# PURPOSE: These functions address the core scientific question of whether
+# volatility in coevolutionary dynamics tracks ER status or mutation rate
+# asymmetry (gamma). Together with the existing fig_gamma_timeseries() and
+# fig_gamma_summary(), they provide a comprehensive test.
+#
+# RUNNING THE EXPERIMENTS — execute from the project root:
+# -------------------------------------------------------
+# Focused run (recommended first — ER-ER only, ~5 sims):
+#   python run_experiments.py -f acute -c ERhost_ERpath \
+#     --gamma-sweep 0.01,0.1,0.5,0.9,0.99 --diploid
+#
+# Full run (all conditions × 5 gammas = 20 sims):
+#   python run_experiments.py -f acute \
+#     --gamma-sweep 0.01,0.1,0.5,0.9,0.99 --diploid
+#
+# Minimal 3-point sweep (fastest, captures the essentials):
+#   python run_experiments.py -f acute \
+#     --gamma-sweep 0.01,0.5,0.99 --diploid
+#
+# Quick test (10K gens, just to check it works):
+#   python run_experiments.py -f acute -c ERhost_ERpath \
+#     --gamma-sweep 0.01,0.5,0.99 --diploid --quick
+#
+# Additional models:
+#   python run_experiments.py -f minimal --gamma-sweep 0.01,0.5,0.99 --diploid
+#   python run_experiments.py -f taylor  --gamma-sweep 0.01,0.5,0.99 --diploid
+#
+# After running, refresh the catalog in R:
+#   refresh_catalog()
+#   list_experiments()   # verify gamma runs appear
+# -------------------------------------------------------
+
+
+# ============================================================================
+# 1. WHO-MUTATES FRACTION
+# ============================================================================
+# Shows what fraction of substitution events are host vs pathogen mutations
+# at each gamma. Validates that gamma actually shifts the substitution balance
+# as expected, and reveals whether ER status modifies the host/path ratio.
+
+fig_gamma_who_mutates <- function(model_name = "acute",
+                                   sigma = 0.1, diploid = TRUE,
+                                   conditions = NULL,
+                                   width = NULL, height = NULL,
+                                   filename = "Gamma_who_mutates") {
+
+  all_df <- load_gamma_sweep(model_name, sigma, diploid, conditions)
+  if (nrow(all_df) == 0) return(invisible(NULL))
+
+  # The mutator column records "host" or "path" for each substitution event
+  if (!"mutator" %in% names(all_df)) {
+    warning("No 'mutator' column found — need full CSV with mutator info")
+    return(invisible(NULL))
+  }
+
+  # Compute host-mutation fraction per (gamma, condition)
+  frac_df <- all_df %>%
+    filter(mutator %in% c("host", "path")) %>%
+    group_by(gamma_label, gamma, scenario) %>%
+    summarise(
+      n_host = sum(mutator == "host"),
+      n_path = sum(mutator == "path"),
+      n_total = n(),
+      frac_host = n_host / n_total,
+      .groups = "drop"
+    )
+
+  # Expected line: frac_host = gamma (if rates scale linearly)
+  expected <- tibble(
+    gamma = seq(0, 1, 0.01),
+    expected_frac = gamma  # naive expectation
+  )
+
+  p <- ggplot(frac_df, aes(x = gamma, y = frac_host, 
+                             color = scenario, shape = scenario)) +
+    geom_line(data = expected, aes(x = gamma, y = expected_frac),
+              inherit.aes = FALSE,
+              color = "gray50", linetype = "dashed", linewidth = 0.5) +
+    geom_point(size = 3, alpha = 0.9) +
+    geom_line(aes(group = scenario), alpha = 0.5) +
+    scale_color_condition() +
+    annotate("text", x = 0.85, y = 0.15, label = "γ = frac(host)",
+             color = "gray50", size = 3, fontface = "italic") +
+    labs(x = expression(gamma ~ "(prob host mutates)"),
+         y = "Fraction of substitutions that are host",
+         title = paste0(model_name, " — who mutates?"),
+         subtitle = "Dashed = naïve expectation (frac_host = γ)") +
+    coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+    mytheme +
+    theme(legend.position = "bottom")
+
+  if (!is.null(filename)) {
+    w <- if (!is.null(width)) width else 7
+    h <- if (!is.null(height)) height else 5
+    ggsave(paste0("figures/", filename, ".pdf"), p, width = w, height = h)
+    ggsave(paste0("figures/", filename, ".png"), p, width = w, height = h)
+    cat("Saved:", filename, "\n")
+  }
+  p
+}
+
+
+# ============================================================================
+# 2. ER-PAIR SYMMETRY TEST
+# ============================================================================
+# The key test: is (ER-host / ET-path, γ=0.99) dynamically equivalent to
+# (ET-host / ER-path, γ=0.01)?
+#
+# If yes → rate asymmetry × ER status interaction drives dynamics
+# If no  → host-path biological asymmetry matters independently
+#
+# Compares trait distributions (KDE) and summary stats for "matched pairs"
+# where the fast player is always the ER player vs always the ET player.
+
+fig_gamma_symmetry_test <- function(model_name = "acute",
+                                     sigma = 0.1, diploid = TRUE,
+                                     width = NULL, height = NULL,
+                                     filename = "Gamma_symmetry_test") {
+
+  all_df <- load_gamma_sweep(model_name, sigma, diploid)
+  if (nrow(all_df) == 0) return(invisible(NULL))
+
+  # Define the matched pairs
+  # Pair A: ER player is fast
+  #   - ET-host / ER-path with γ=0.01 (path=ER is fast)
+  #   - ER-host / ET-path with γ=0.99 (host=ER is fast)
+  # Pair B: ER player is slow
+  #   - ET-host / ER-path with γ=0.99 (path=ER is slow)
+  #   - ER-host / ET-path with γ=0.01 (host=ER is slow)
+
+  pairs <- all_df %>%
+    filter(condition %in% c("EThost_ERpath", "ERhost_ETpath")) %>%
+    mutate(
+      pair_label = case_when(
+        condition == "EThost_ERpath" & gamma < 0.1 ~ "ER-fast (path ER, γ=0.01)",
+        condition == "ERhost_ETpath" & gamma > 0.9 ~ "ER-fast (host ER, γ=0.99)",
+        condition == "EThost_ERpath" & gamma > 0.9 ~ "ER-slow (path ER, γ=0.99)",
+        condition == "ERhost_ETpath" & gamma < 0.1 ~ "ER-slow (host ER, γ=0.01)",
+        condition == "EThost_ERpath" & abs(gamma - 0.5) < 0.1 ~ "Equal (path ER, γ=0.5)",
+        condition == "ERhost_ETpath" & abs(gamma - 0.5) < 0.1 ~ "Equal (host ER, γ=0.5)",
+        TRUE ~ NA_character_
+      ),
+      speed_class = case_when(
+        (condition == "EThost_ERpath" & gamma < 0.1) |
+          (condition == "ERhost_ETpath" & gamma > 0.9) ~ "ER player fast",
+        (condition == "EThost_ERpath" & gamma > 0.9) |
+          (condition == "ERhost_ETpath" & gamma < 0.1) ~ "ER player slow",
+        TRUE ~ "Equal rates"
+      )
+    ) %>%
+    filter(!is.na(pair_label))
+
+  if (nrow(pairs) == 0) {
+    warning("Need gamma = 0.01 and 0.99 for both asymmetric conditions.\n",
+            "  Run: python run_experiments.py -f ", model_name,
+            " --gamma-sweep 0.01,0.5,0.99 --diploid")
+    return(invisible(NULL))
+  }
+
+  yax <- auto_trait_axis(model_name)
+
+  # Panel A: Virulence density by matched pair
+  p_v <- ggplot(pairs, aes(x = v, fill = pair_label, color = pair_label)) +
+    geom_density(alpha = 0.3, linewidth = 0.6) +
+    facet_wrap(~ speed_class, ncol = 1) +
+    scale_x_continuous(limits = yax$lims) +
+    labs(x = expression(italic(v) ~ "(virulence)"),
+         y = "Density", fill = NULL, color = NULL) +
+    mytheme +
+    theme(legend.position = "bottom",
+          legend.text = element_text(size = 8))
+
+  # Panel B: Clearance density by matched pair
+  p_s <- ggplot(pairs, aes(x = s, fill = pair_label, color = pair_label)) +
+    geom_density(alpha = 0.3, linewidth = 0.6) +
+    facet_wrap(~ speed_class, ncol = 1) +
+    scale_x_continuous(limits = yax$lims) +
+    labs(x = expression(italic(c) ~ "(clearance)"),
+         y = "Density", fill = NULL, color = NULL) +
+    mytheme +
+    theme(legend.position = "bottom",
+          legend.text = element_text(size = 8))
+
+  # Panel C: Summary stats comparison
+  stats <- pairs %>%
+    group_by(pair_label, speed_class) %>%
+    summarise(
+      cv_v = sd(v, na.rm = TRUE) / mean(v, na.rm = TRUE),
+      cv_s = sd(s, na.rm = TRUE) / mean(s, na.rm = TRUE),
+      mean_v = mean(v, na.rm = TRUE),
+      mean_s = mean(s, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    pivot_longer(c(cv_v, cv_s), names_to = "metric", values_to = "value") %>%
+    mutate(metric = ifelse(metric == "cv_v", "CV(v)", "CV(c)"))
+
+  p_stats <- ggplot(stats, aes(x = pair_label, y = value, fill = speed_class)) +
+    geom_col(alpha = 0.8, width = 0.7) +
+    facet_wrap(~ metric, scales = "free_y") +
+    labs(x = NULL, y = "Value", fill = NULL) +
+    mytheme +
+    theme(axis.text.x = element_text(angle = 35, hjust = 1, size = 8),
+          legend.position = "none")
+
+  combined <- (p_v | p_s) / p_stats +
+    plot_annotation(
+      title = paste0(model_name, " — ER speed symmetry test"),
+      subtitle = "Do matched pairs (ER-fast vs ER-slow) show equivalent dynamics?",
+      tag_levels = "A"
+    ) +
+    plot_layout(heights = c(2, 1))
+
+  if (!is.null(filename)) {
+    w <- if (!is.null(width)) width else 10
+    h <- if (!is.null(height)) height else 10
+    ggsave(paste0("figures/", filename, ".pdf"), combined, width = w, height = h)
+    ggsave(paste0("figures/", filename, ".png"), combined, width = w, height = h)
+    cat("Saved:", filename, "\n")
+  }
+  combined
+}
+
+
+# ============================================================================
+# 3. TRAIT DENSITY × GAMMA HEATMAP
+# ============================================================================
+# For a single condition (e.g. ER-ER), shows how the 2D trait distribution
+# shifts as gamma changes. Each panel = one gamma value, with hexbin or
+# contour density in (v, c) space. Nash equilibrium marked.
+
+fig_gamma_trait_density <- function(model_name = "acute",
+                                    condition_filter = "ERhost_ERpath",
+                                    sigma = 0.1, diploid = TRUE,
+                                    width = NULL, height = NULL,
+                                    filename = "Gamma_trait_density") {
+
+  all_df <- load_gamma_sweep(model_name, sigma, diploid,
+                              conditions = condition_filter)
+  if (nrow(all_df) == 0) return(invisible(NULL))
+
+  yax <- auto_trait_axis(model_name)
+
+  # Get Nash equilibrium for reference
+  nash <- tryCatch({
+    mod <- FITNESS_MODELS[[model_name]]
+    nash_eq(mod$fH, mod$fP, mod$params,
+            TRAIT_DOMAIN[[model_name]][1], TRAIT_DOMAIN[[model_name]][2])
+  }, error = function(e) list(v = NA, s = NA))
+
+  p <- ggplot(all_df, aes(x = v, y = s)) +
+    geom_hex(bins = 40, alpha = 0.9) +
+    scale_fill_viridis_c(option = "magma", trans = "log10",
+                         name = "Count") +
+    facet_wrap(~ gamma_label, nrow = 1) +
+    coord_fixed(xlim = yax$lims, ylim = yax$lims) +
+    labs(x = expression(italic(v) ~ "(virulence)"),
+         y = expression(italic(c) ~ "(clearance)"),
+         title = paste0(model_name, " / ",
+                        condition_filter, " — trait density across \u03b3")) +
+    mytheme +
+    theme(strip.text = element_text(size = 10))
+
+  # Add Nash point if found
+  if (!is.na(nash$v)) {
+    p <- p + geom_point(data = data.frame(v = nash$v, s = nash$s),
+                        aes(v, s), color = "white", shape = 4,
+                        size = 3, stroke = 1.5)
+  }
+
+  if (!is.null(filename)) {
+    n_gammas <- n_distinct(all_df$gamma_label)
+    w <- if (!is.null(width)) width else max(8, 3 * n_gammas)
+    h <- if (!is.null(height)) height else 4
+    ggsave(paste0("figures/", filename, ".pdf"), p, width = w, height = h)
+    ggsave(paste0("figures/", filename, ".png"), p, width = w, height = h)
+    cat("Saved:", filename, "\n")
+  }
+  p
+}
+
+
+# ============================================================================
+# 4. SUBSTITUTION TEMPO COMPARISON
+# ============================================================================
+# Shows the rate of evolutionary change (substitutions per unit time)
+# as a function of gamma. Separates host and pathogen substitution rates.
+# This reveals whether gamma primarily controls WHO mutates or also
+# changes the TOTAL rate of evolution.
+
+fig_gamma_tempo <- function(model_name = "acute",
+                             sigma = 0.1, diploid = TRUE,
+                             conditions = NULL,
+                             width = NULL, height = NULL,
+                             filename = "Gamma_tempo") {
+
+  all_df <- load_gamma_sweep(model_name, sigma, diploid, conditions)
+  if (nrow(all_df) == 0) return(invisible(NULL))
+
+  if (!"mutator" %in% names(all_df)) {
+    warning("No 'mutator' column — need full CSV")
+    return(invisible(NULL))
+  }
+
+  # Count substitution events per unit evolutionary time
+  tempo_df <- all_df %>%
+    filter(mutator %in% c("host", "path")) %>%
+    group_by(gamma, gamma_label, scenario) %>%
+    summarise(
+      time_span = max(gen, na.rm = TRUE) - min(gen, na.rm = TRUE),
+      n_host_subs = sum(mutator == "host"),
+      n_path_subs = sum(mutator == "path"),
+      n_total     = n(),
+      .groups = "drop"
+    ) %>%
+    mutate(
+      rate_host  = n_host_subs / time_span,
+      rate_path  = n_path_subs / time_span,
+      rate_total = n_total / time_span
+    ) %>%
+    pivot_longer(c(rate_host, rate_path, rate_total),
+                 names_to = "rate_type", values_to = "rate") %>%
+    mutate(rate_type = case_when(
+      rate_type == "rate_host"  ~ "Host subs / gen",
+      rate_type == "rate_path"  ~ "Pathogen subs / gen",
+      rate_type == "rate_total" ~ "Total subs / gen"
+    ))
+
+  p <- ggplot(tempo_df, aes(x = gamma, y = rate, 
+                              color = scenario, shape = rate_type)) +
+    geom_point(size = 2.5, alpha = 0.9) +
+    geom_line(aes(group = interaction(scenario, rate_type)), alpha = 0.4) +
+    facet_wrap(~ rate_type, scales = "free_y") +
+    scale_color_condition() +
+    labs(x = expression(gamma),
+         y = "Substitution rate (events / generation)",
+         title = paste0(model_name, " — evolutionary tempo across \u03b3"),
+         color = "Condition") +
+    mytheme +
+    theme(legend.position = "bottom")
+
+  if (!is.null(filename)) {
+    w <- if (!is.null(width)) width else 12
+    h <- if (!is.null(height)) height else 5
+    ggsave(paste0("figures/", filename, ".pdf"), p, width = w, height = h)
+    ggsave(paste0("figures/", filename, ".png"), p, width = w, height = h)
+    cat("Saved:", filename, "\n")
+  }
+  p
+}
+
+
+# ============================================================================
+# 5. ACF COMPARISON ACROSS GAMMA
+# ============================================================================
+# Autocorrelation decay for v and s traits across gamma values.
+# If ER drives long-range temporal correlations (punctuated equilibrium),
+# ACF shape should be similar regardless of gamma.
+# If gamma matters, fast-player traits should decorrelate faster.
+
+fig_gamma_acf <- function(model_name = "acute",
+                           condition_filter = "ERhost_ERpath",
+                           sigma = 0.1, diploid = TRUE,
+                           max_lag = 5000,
+                           width = NULL, height = NULL,
+                           filename = "Gamma_acf") {
+
+  all_df <- load_gamma_sweep(model_name, sigma, diploid,
+                              conditions = condition_filter)
+  if (nrow(all_df) == 0) return(invisible(NULL))
+
+  acf_list <- all_df %>%
+    group_by(gamma_label) %>%
+    group_modify(~ {
+      acf_v <- acf(.x$v, lag.max = max_lag, plot = FALSE)
+      acf_s <- acf(.x$s, lag.max = max_lag, plot = FALSE)
+      bind_rows(
+        tibble(lag = acf_v$lag[-1], acf = acf_v$acf[-1], trait = "v (virulence)"),
+        tibble(lag = acf_s$lag[-1], acf = acf_s$acf[-1], trait = "c (clearance)")
+      )
+    }) %>%
+    ungroup()
+
+  p <- ggplot(acf_list, aes(x = lag, y = acf, color = gamma_label)) +
+    geom_hline(yintercept = 0, color = "gray70", linewidth = 0.3) +
+    geom_line(alpha = 0.8, linewidth = 0.6) +
+    facet_wrap(~ trait) +
+    labs(x = "Lag (generations)", y = "Autocorrelation",
+         title = paste0(model_name, " / ", condition_filter,
+                        " — ACF across \u03b3"),
+         color = NULL) +
+    mytheme +
+    theme(legend.position = "bottom")
+
+  if (!is.null(filename)) {
+    w <- if (!is.null(width)) width else 10
+    h <- if (!is.null(height)) height else 5
+    ggsave(paste0("figures/", filename, ".pdf"), p, width = w, height = h)
+    ggsave(paste0("figures/", filename, ".png"), p, width = w, height = h)
+    cat("Saved:", filename, "\n")
+  }
+  p
+}
+
+
+# ============================================================================
+# CALL BLOCK — add to bottom of Plots.R (commented, like other call blocks)
+# ============================================================================
+
+# # --- Gamma sweep figures ---
+# # (Requires gamma sweep data — run experiments first)
+# #
+# # Recommended execution sequence:
+# #   1. Run experiments:
+# #      python run_experiments.py -f acute --gamma-sweep 0.01,0.5,0.99 --diploid
+# #   2. Refresh catalog:
+# #      refresh_catalog()
+# #   3. Generate figures:
+#
+# # Core figures (already in Plots.R):
+# fig_gamma_timeseries("acute", filename = "Gamma_timeseries_acute")
+# fig_gamma_summary("acute", filename = "Gamma_summary_acute")
+#
+# # New figures:
+# fig_gamma_who_mutates("acute", filename = "Gamma_who_mutates_acute")
+# fig_gamma_symmetry_test("acute", filename = "Gamma_symmetry_acute")
+# fig_gamma_trait_density("acute", filename = "Gamma_trait_density_ERER_acute")
+# fig_gamma_tempo("acute", filename = "Gamma_tempo_acute")
+# fig_gamma_acf("acute", filename = "Gamma_acf_ERER_acute")
+#
+# # ER-ER only (focused):
+# fig_gamma_timeseries("acute", conditions = "ERhost_ERpath",
+#                       filename = "Gamma_ERER_timeseries_acute")
+# fig_gamma_trait_density("acute", condition_filter = "ERhost_ERpath",
+#                          filename = "Gamma_ERER_density_acute")
+#
+# # Asymmetric conditions only (for symmetry test):
+# fig_gamma_timeseries("acute",
+#                       conditions = c("EThost_ERpath", "ERhost_ETpath"),
+#                       filename = "Gamma_asymmetric_timeseries_acute")
+#
+# # Other models:
+# fig_gamma_timeseries("minimal", filename = "Gamma_timeseries_minimal")
+# fig_gamma_summary("minimal", filename = "Gamma_summary_minimal")
 
 #-------
 #PLOTS#
 #-------
+# Overwrite default trait domains with model-specific ones if provided
+
+# Trait domain per model.  Taylor uses rates (unbounded); others use [0,1].
+TRAIT_DOMAIN <- list(
+  acute   = c(0.001, 0.999),
+  chronic = c(0.001, 0.999),
+  minimal = c(0.001, 0.999),
+  taylor  = c(0.01,  20.0)     # Nash ≈ (v*=9, c*=3)
+)
+
+# Clean axis limits for plotting (not the simulation clamp bounds)
+TRAIT_DISPLAY <- list(
+  acute   = c(0, 1),
+  chronic = c(0, 1),
+  minimal = c(0, 1),
+  taylor  = c(0, 20)
+)
 
 # These do not need simulation data, so we can call them directly.
 # landscapes for all simulations
-fig_landscape(model_name = "acute", filename = "Fitness_landscapes_acute", 
-              width = 10, height = 4)
-fig_landscape(model_name = "minimal", filename = "Fitness_landscapes_minimal", 
-              width = 10, height = 4)
-fig_landscape(model_name = "taylor", filename = "Fitness_landscapes_taylor", 
-              width = 10, height = 4)
+fig_landscape(model_name = "acute", filename = "Fitness_landscapes_acute")
+fig_landscape(model_name = "minimal", filename = "Fitness_landscapes_minimal")
+fig_landscape(model_name = "taylor", filename = "Fitness_landscapes_taylor")
 
 # strategy panels (analytical — no simulation data needed)
-fig_strategy_panels(model_name = "acute",   filename = "Strategies_acute",
-                    width = 10, height = 4)
-#fig_strategy_panels(model_name = "taylor",  filename = "Strategies_taylor",
-#                    width = 10, height = 4)
-#fig_strategy_panels(model_name = "minimal", filename = "Strategies_minimal",
-#                    width = 10, height = 4)
+fig_strategy_panels(model_name = "acute",   filename = "Strategies_acute")
+fig_strategy_panels(model_name = "minimal", filename = "Strategies_minimal")
+fig_strategy_panels(model_name = "taylor",  filename = "Strategies_taylor")
 
 #SIMULATION PLOTS#
 
@@ -2789,15 +3500,19 @@ list_experiments()
 
 fig_timeseries("acute", "Time_series_acute", diploid = TRUE, max_pts = 100,
                sigma = 0.1, width = 9, height = 10) 
- 
-#fig_timeseries("minimal", "Time_series_minimal", diploid = TRUE, max_pts = 100, 
-#               sigma = 0.1, width = 9, height = 10)
 
-#fig_timeseries("taylor", "Time_series_taylor", diploid = TRUE, max_pts = 100, 
-#               sigma = 0.1, width = 9, height = 10)
+fig_timeseries("minimal", "Time_series_minimal", diploid = TRUE, max_pts = 100, 
+               sigma = 0.1, width = 9, height = 10)
+
+fig_timeseries("taylor", "Time_series_taylor", diploid = TRUE, max_pts = 100,
+               sigma = 0.1, width = 9, height = 10)
+
+fig_timeseries("taylor", "Time_series_taylor_not_thinned", diploid = TRUE, max_pts = Inf,
+               sigma = 0.1, width = 9, height = 10)
 
 # Specific variants
 # Works even if only some conditions exist for that variant
+# (Only for acute)
 # Step size experiments
 fig_step_size_comparison(model_name = "acute", diploid = TRUE, 
                          filename = "Stepsize_sweeps_acute_EThost_ETpath", 
@@ -2815,24 +3530,58 @@ fig_pinned_comparison("acute", diploid = TRUE, sigma = 0.1,
 # colored by magnitude of violation. Useful for understanding the geometry of the 
 #landscape and why certain strategies are stable or not.
 
-fig_nash_violation_map(model_name = "acute", diploid = T, resolution = 80,
+fig_nash_violation_map(model_name = "acute", diploid = T, resolution = 100,
                        width = 7, height = 5, 
-                       filename = "Nash_vilolation_map_acute")
+                       filename = "Nash_violation_map_acute")
+
+fig_nash_violation_map(model_name = "minimal", diploid = T, resolution = 100,
+                       width = 7, height = 5, 
+                       filename = "Nash_violation_map_minimal")
+
+fig_nash_violation_map(model_name = "taylor", diploid = T, resolution = 100,
+                       width = 7, height = 5, 
+                       filename = "Nash_violation_map_taylor")
+
 
 # Snapshots of evolutionary trajectories in trait space, colored by time, with Nash
 fig_snapshots(model_name = "acute", condition = "ERhost_ERpath", n_panels = 6, 
               diploid = TRUE, sigma = 0.1, width = 7, height = 5, 
               filename = "ER-ER_Snapshots_acute")
 
+fig_snapshots(model_name = "minimal", condition = "ERhost_ERpath", n_panels = 6, 
+              diploid = TRUE, sigma = 0.1, width = 7, height = 5, 
+              filename = "ER-ER_Snapshots_minimal")
+
+fig_snapshots(model_name = "taylor", condition = "ERhost_ERpath", n_panels = 6, 
+              diploid = TRUE, sigma = 0.1, width = 7, height = 5, 
+              filename = "ER-ER_Snapshots_taylor")
+
+
 # Combined hexbin of all trajectories in trait space, colored by time, with Nash
 fig_hex_combined(models = "acute", diploid = TRUE, sigma = 0.1, 
                  width = 8, height = 4, 
                  filename = "ER-ER_strategy_points_acute") 
 
+fig_hex_combined(models = "minimal", diploid = TRUE, sigma = 0.1, 
+                 width = 8, height = 4, 
+                 filename = "ER-ER_strategy_points_minimal") 
+
+fig_hex_combined(models = "taylor", diploid = TRUE, sigma = 0.1, 
+                 width = 8, height = 4, 
+                 filename = "ER-ER_strategy_points_taylor") 
+
 # Evolution of strategies over time, with Nash equilibrium marked, faceted by condition
 fig_strategy_evolution(model_name = "acute", diploid = TRUE, sigma = 0.1, 
                        width = 8, height = 6, 
                        filename = "ER-ER_strategy_evolution_acute")
+
+fig_strategy_evolution(model_name = "minimal", diploid = TRUE, sigma = 0.1, 
+                       width = 8, height = 6, 
+                       filename = "ER-ER_strategy_evolution_minimal")
+
+fig_strategy_evolution(model_name = "taylor", diploid = TRUE, sigma = 0.1, 
+                       width = 8, height = 6, 
+                       filename = "ER-ER_strategy_evolution_taylor")
 
 # Distribution of spectral slopes in the time series, which can indicate stability 
 #and memory effects.
@@ -2840,42 +3589,61 @@ fig_slope_distribution(model_name = "acute", diploid = TRUE, sigma = 0.1,
                        width = 6, height = 5, 
                        filename = "ER-ER_stability_acute")  
 
+fig_slope_distribution(model_name = "minimal", diploid = TRUE, sigma = 0.1, 
+                       width = 6, height = 5, 
+                       filename = "ER-ER_stability_minimal")  
+
+fig_slope_distribution(model_name = "taylor", diploid = TRUE, sigma = 0.1, 
+                       width = 6, height = 5, 
+                       filename = "ER-ER_stability_taylor")  
+
 
 # Other TS stat, diagnostic figures: 
 # CV of traits in sliding windows, spectral slope distribution, correlation length
-fig_ts_stats("acute", diploid = TRUE, sigma = 0.1, 
-             filename = "TS_stats_acute")
+fig_ts_stats("acute", diploid = TRUE, sigma = 0.1, filename = "TS_stats_acute")
+fig_ts_stats("minimal", diploid = TRUE, sigma = 0.1, filename = "TS_stats_minimal")
+fig_ts_stats("taylor", diploid = TRUE, sigma = 0.1, filename = "TS_stats_taylor")
 
 # Step size distribution across conditions, which can indicate how the effective mutation
 
-fig_step_sizes("acute", diploid = TRUE, sigma = 0.1, 
-               filename = "Realized_step_sizes_acute")
+fig_step_sizes("acute", diploid = TRUE, sigma = 0.1, filename = "Realized_step_sizes_acute")
+fig_step_sizes("minimal", diploid = TRUE, sigma = 0.1, filename = "Realized_step_sizes_minimal")
+fig_step_sizes("taylor", diploid = TRUE, sigma = 0.1, filename = "Realized_step_sizes_taylor")
 
 # Neutral drift analysis: fraction of mutations that are effectively neutral, and the
 # distribution of their decoupling ratios (genotype vs phenotype change), which can
 # indicate how much of the evolutionary dynamics is driven by drift vs selection, and
 # how much genotypic change is decoupled from phenotypic change.
-fig_neutral_drift("acute", diploid = TRUE, sigma = 0.1, 
-                  filename = "Neutral_drift_acute")
+fig_neutral_drift("acute", diploid = TRUE, sigma = 0.1, filename = "Neutral_drift_acute")
+fig_neutral_drift("minimal", diploid = TRUE, sigma = 0.1, filename = "Neutral_drift_minimal")
+fig_neutral_drift("taylor", diploid = TRUE, sigma = 0.1, filename = "Neutral_drift_taylor")
 
 # Dwell time distributions in different regions of trait space (near Nash, stable
 # regions, boundaries), which can indicate how long populations tend to stay in these
 # regions and how that differs across conditions.
-fig_dwell_times("acute", region = "nash", diploid = TRUE, 
-                filename = "Dwell_nash_acute")
+fig_dwell_times("acute", region = "nash", diploid = TRUE, filename = "Dwell_nash_acute")
+fig_dwell_times("acute", region = "stable", diploid = TRUE, filename = "Dwell_stable_acute")
+fig_dwell_times("acute", region = "boundary", diploid = TRUE, filename = "Dwell_boundary_acute")
 
-fig_dwell_times("acute", region = "stable", diploid = TRUE, 
-                filename = "Dwell_stable_acute")
+fig_dwell_times("minimal", region = "nash", diploid = TRUE, filename = "Dwell_nash_minimal")
+fig_dwell_times("minimal", region = "stable", diploid = TRUE, filename = "Dwell_stable_minimal")
+fig_dwell_times("minimal", region = "boundary", diploid = TRUE, filename = "Dwell_boundary_minimal")
 
-fig_dwell_times("acute", region = "boundary", diploid = TRUE, 
-                filename = "Dwell_boundary_acute")
+fig_dwell_times("taylor", region = "nash", diploid = TRUE, filename = "Dwell_nash_taylor")
+fig_dwell_times("taylor", region = "stable", diploid = TRUE, filename = "Dwell_stable_taylor")
+fig_dwell_times("taylor", region = "boundary", diploid = TRUE, filename = "Dwell_boundary_taylor")
 
 # Trait density distributions across conditions, with Nash equilibrium marked, which can
 # indicate how the population is distributed in trait space and how close it is to the Nash
 # equilibrium under different conditions.
 fig_trait_density("acute", sigma = 0.1, diploid = TRUE, filename = "Trait_density_acute")
+fig_trait_density("minimal", sigma = 0.1, diploid = TRUE, filename = "Trait_density_minimal")
+fig_trait_density("taylor", sigma = 0.1, diploid = TRUE, filename = "Trait_density_taylor")
 
 # Boundary occupancy: fraction of time spent at trait-space boundaries, which can indicate
 # how much the population is pushed against the limits of trait space under different conditions.
 fig_boundary_occupancy("acute", sigma = 0.1, diploid = TRUE, filename = "Boundary_occupancy_acute")
+fig_boundary_occupancy("minimal", sigma = 0.1, diploid = TRUE, filename = "Boundary_occupancy_minimal")
+fig_boundary_occupancy("taylor", sigma = 0.1, diploid = TRUE, filename = "Boundary_occupancy_taylor")
+
 
