@@ -413,6 +413,8 @@ discover_experiments <- function(results_root = "results", refresh = FALSE) {
         std_dev_move  = cfg$std_dev_move %||% NA_real_,
         gamma         = cfg$prob_host_mutate %||% NA_real_,
         diploid       = isTRUE(cfg$DIPLOID_KIMURA),
+        rep           = if (is.null(cfg$rep)) NA_integer_ else as.integer(cfg$rep),
+        effective_seed = if (is.null(cfg$effective_seed)) NA_integer_ else as.integer(cfg$effective_seed),
         fix_host      = if (is.null(cfg$FIX_HOST_TRAIT) || 
                             isFALSE(cfg$FIX_HOST_TRAIT)) NA_real_ 
         else as.numeric(cfg$FIX_HOST_TRAIT),
@@ -562,13 +564,13 @@ load_sim <- function(model, scenario, min_gen = MIN_GEN_CUTOFF,
   
   # Exclude pinned-trait runs (those belong in fig_pinned_comparison)
   subset <- subset %>% filter(is.na(fix_host), is.na(fix_path))
-
+  
   # Apply explicit filters
   if (!is.null(sigma))
     subset <- subset %>% filter(abs(std_dev_move - sigma) < 1e-6)
   if (!is.null(diploid_filter))
     subset <- subset %>% filter(diploid == diploid_filter)
-
+  
   # If still multiple matches, pick best: default sigma, default gamma, longest run
   if (nrow(subset) > 1) {
     subset <- subset %>%
@@ -643,7 +645,7 @@ fig_step_size_comparison <- function(model_name = "acute",
             " — defaulting to haploid. Set diploid=TRUE to override.")
     cat <- cat %>% filter(!diploid)
   }
-
+  
   if (nrow(cat) == 0) {
     warning("No experiments found for ", model_name, " / ", condition)
     return(NULL)
@@ -670,7 +672,7 @@ fig_step_size_comparison <- function(model_name = "acute",
     scale_y_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1)) +
     labs(y = expression(italic(v)), x = NULL) +
     mytheme
-
+  
   p_s <- ggplot(thin_for_plot(all_df), aes(gen, s)) +
     geom_line(alpha = 0.7, linewidth = 0.3) +
     facet_wrap(~sigma_label, ncol = 1) +
@@ -710,7 +712,7 @@ fig_pinned_comparison <- function(model_name = "acute",
                                   width = NULL,
                                   height = NULL,
                                   filename = NULL) {
-
+  
   cat <- discover_experiments() %>%
     filter(fitness == model_name,
            abs(std_dev_move - sigma) < 1e-6)
@@ -799,7 +801,7 @@ fig_pinned_comparison <- function(model_name = "acute",
     scale_y_continuous(limits = c(0, 1), breaks = c(0, 0.5, 1)) +
     labs(y = expression(italic(v)), x = NULL) +
     compact_theme
-
+  
   p_s <- ggplot(all_df, aes(gen, s)) +
     geom_line(alpha = 0.7, linewidth = 0.3) +
     facet_grid(pin_label ~ cond_label) +
@@ -840,7 +842,7 @@ fig_landscape <- function(model_name = "acute",
   nash_pt <- find_nash(model_name)
   dom     <- if (model_name %in% names(TRAIT_DISPLAY))
     TRAIT_DISPLAY[[model_name]] else TRAIT_DOMAIN[[model_name]]
-
+  
   # Normalize to [0,1]
   grid$fH_norm <- grid$fH / max(grid$fH)
   grid$fP_norm <- grid$fP / max(grid$fP)
@@ -985,7 +987,7 @@ fig_strategy_panels <- function(model_name = "acute",
       scale_x_continuous(breaks = ax_breaks) +
       scale_y_continuous(breaks = ax_breaks) +
       mytheme
-
+    
     if (show_yaxis) {
       p <- p + labs(x = "v (virulence)", y = "c (clearance)")
     } else {
@@ -1074,14 +1076,14 @@ auto_time_axis <- function(df, n_breaks = 3) {
   gen_range <- range(df$gen, na.rm = TRUE)
   lo <- gen_range[1]
   hi <- gen_range[2]
-
+  
   # Nice labels
   fmt_label <- function(x) {
     if (x >= 1e6) sprintf("%.0fM", x / 1e6)
     else if (x >= 1e3) sprintf("%.0fK", x / 1e3)
     else as.character(x)
   }
-
+  
   # Use clean breaks for common run lengths
   if (hi >= 9e5 && hi <= 1.1e6) {
     brk <- c(1, 5e5, 1e6)
@@ -1098,7 +1100,7 @@ auto_time_axis <- function(df, n_breaks = 3) {
       brk <- brk[idx]
     }
   }
-
+  
   labs <- sapply(brk, fmt_label)
   list(lims = c(lo, hi), breaks = brk, labels = labs)
 }
@@ -1395,13 +1397,13 @@ hex_landscape_panel <- function(data, model_name = "acute",
     p <- p + geom_point(data = nash_pt, aes(x = v, y = s),
                         size = 4, color = "black", shape = 16)
   }
-
+  
   # Realized mean as yellow cross
   mean_pt <- data.frame(v = mean(data$v, na.rm = TRUE),
                         s = mean(data$s, na.rm = TRUE))
   p <- p + geom_point(data = mean_pt, aes(x = v, y = s),
-                       size = 4, color = "#FFD700", shape = 4, stroke = 1.5)
-
+                      size = 4, color = "#FFD700", shape = 4, stroke = 1.5)
+  
   p <- p +
     scale_x_continuous(breaks = ax_breaks, limits = dom) +
     scale_y_continuous(breaks = ax_breaks, limits = dom) +
@@ -1539,18 +1541,18 @@ make_snapshot_panel <- function(es_data, gen_num, grid,
     mytheme +
     theme(panel.grid = element_blank(),
           plot.title = element_text(hjust = 0.02, vjust = -1, size = 14))
-
+  
   if (!show_x)
     p <- p + theme(axis.text.x = element_blank(),
                    axis.ticks.x = element_blank())
-
+  
   if (!show_y)
     p <- p + theme(axis.text.y = element_blank(),
                    axis.ticks.y = element_blank())
-
+  
   if (show_x_label) p <- p + labs(x = "v (virulence)")
   if (show_y_label) p <- p + labs(y = "c (clearance)")
-
+  
   p
 }
 
@@ -1568,7 +1570,7 @@ fig_snapshots <- function(es_data = NULL, model_name = "acute",
                           diploid = NULL,
                           width = NULL, height = NULL,
                           filename = "Figure5_snapshots") {
-
+  
   if (is.null(es_data)) {
     es_data <- load_sim(model_name, condition, sigma = sigma,
                         diploid_filter = diploid)
@@ -1577,7 +1579,7 @@ fig_snapshots <- function(es_data = NULL, model_name = "acute",
       return(invisible(NULL))
     }
   }
-
+  
   grid <- make_fitness_grid(model_name, resolution = 200)
   
   # Pick snapshot generations
@@ -1592,13 +1594,13 @@ fig_snapshots <- function(es_data = NULL, model_name = "acute",
   nrow <- ceiling(n_panels / ncol)
   mid_col <- ceiling(ncol / 2)    # middle column for x-label
   mid_row <- ceiling(nrow / 2)    # middle row for y-label
-
+  
   panels <- list()
   for (i in seq_along(gens)) {
     g <- gens[i]
     ri <- ceiling(i / ncol)
     ci <- ((i - 1) %% ncol) + 1
-
+    
     panels[[i]] <- make_snapshot_panel(
       es_data, gen_num = g, grid = grid,
       title_label = paste0("gen ", format(g, big.mark = ",")),
@@ -1642,6 +1644,20 @@ fig_snapshots <- function(es_data = NULL, model_name = "acute",
 # ============================================================================
 
 calc_violation_grid <- function(model_name = "acute", resolution = 80) {
+  # -----------------------------------------------------------------------
+  # Nash stability via BEST-RESPONSE SLOPES (second derivatives)
+  #
+  # Host best response c*(v) satisfies  dW_H/ds = 0.
+  #   Slope:  dc*/dv = -W_H,sv / W_H,ss   (implicit function theorem)
+  #
+  # Pathogen best response v*(c) satisfies  dW_P/dv = 0.
+  #   Slope:  dv*/dc = -W_P,vs / W_P,vv
+  #
+  # Stability product:  dc*/dv * dv*/dc
+  #   |product| < 1  =>  compatible (stable Nash)
+  #   product  >= 1  =>  violates (red)   — both slopes same sign, too steep
+  #   product  <= -1 =>  violates (blue)  — slopes opposite sign, too steep
+  # -----------------------------------------------------------------------
   mod <- FITNESS_MODELS[[model_name]]
   dom <- TRAIT_DOMAIN[[model_name]]
   h <- (dom[2] - dom[1]) * 1e-3   # finite-difference step
@@ -1653,20 +1669,38 @@ calc_violation_grid <- function(model_name = "acute", resolution = 80) {
     s = seq(lo, hi, length.out = resolution)
   )
   
+  # Vectorised second-derivative helpers (central differences)
+  # W_ss  = d²W/ds²     = [W(v, s+h) - 2W(v, s) + W(v, s-h)] / h²
+  # W_vv  = d²W/dv²     = [W(v+h, s) - 2W(v, s) + W(v-h, s)] / h²
+  # W_sv  = d²W/(ds dv)  = [W(v+h,s+h) - W(v+h,s-h) - W(v-h,s+h) + W(v-h,s-h)] / (4h²)
+  
   grid %>%
     rowwise() %>%
     mutate(
-      FH_v = (mod$fH(min(v + h, hi), s) - mod$fH(max(v - h, lo), s)) /
-        (min(v + h, hi) - max(v - h, lo)),
-      FH_s = (mod$fH(v, min(s + h, hi)) - mod$fH(v, max(s - h, lo))) /
-        (min(s + h, hi) - max(s - h, lo)),
-      FP_v = (mod$fP(min(v + h, hi), s) - mod$fP(max(v - h, lo), s)) /
-        (min(v + h, hi) - max(v - h, lo)),
-      FP_s = (mod$fP(v, min(s + h, hi)) - mod$fP(v, max(s - h, lo))) /
-        (min(s + h, hi) - max(s - h, lo)),
-      m_c = -FH_v / (FH_s + 1e-12),
-      m_v = -FP_s / (FP_v + 1e-12),
-      prod_mv = m_c * m_v,
+      # --- Host second partials (needed: W_H,ss and W_H,sv) ---
+      fH_ss = (mod$fH(v, min(s + h, hi)) - 2 * mod$fH(v, s) +
+                 mod$fH(v, max(s - h, lo))) / h^2,
+      fH_sv = (mod$fH(min(v + h, hi), min(s + h, hi)) -
+                 mod$fH(min(v + h, hi), max(s - h, lo)) -
+                 mod$fH(max(v - h, lo), min(s + h, hi)) +
+                 mod$fH(max(v - h, lo), max(s - h, lo))) / (4 * h^2),
+      
+      # --- Pathogen second partials (needed: W_P,vv and W_P,vs) ---
+      fP_vv = (mod$fP(min(v + h, hi), s) - 2 * mod$fP(v, s) +
+                 mod$fP(max(v - h, lo), s)) / h^2,
+      fP_vs = (mod$fP(min(v + h, hi), min(s + h, hi)) -
+                 mod$fP(min(v + h, hi), max(s - h, lo)) -
+                 mod$fP(max(v - h, lo), min(s + h, hi)) +
+                 mod$fP(max(v - h, lo), max(s - h, lo))) / (4 * h^2),
+      
+      # --- Best-response slopes ---
+      # Host:    dc*/dv = -W_H,sv / W_H,ss
+      # Pathogen: dv*/dc = -W_P,vs / W_P,vv
+      br_host = -fH_sv / (fH_ss + 1e-12),   # dc*/dv
+      br_path = -fP_vs / (fP_vv + 1e-12),   # dv*/dc
+      
+      # --- Stability product ---
+      prod_mv = br_host * br_path,
       zone = case_when(
         prod_mv >= 1  ~ "violates (>=1)",
         prod_mv <= -1 ~ "violates (<=-1)",
@@ -1690,7 +1724,7 @@ fig_nash_violation_map <- function(model_name = "acute",
     es_data <- load_sim(model_name, condition, sigma = sigma,
                         diploid_filter = diploid)
   }
-
+  
   vgrid <- calc_violation_grid(model_name, resolution)
   nash_pt <- find_nash(model_name)
   dom <- TRAIT_DOMAIN[[model_name]]
@@ -1707,7 +1741,7 @@ fig_nash_violation_map <- function(model_name = "acute",
     labs(x = "v (virulence)", y = "c (clearance)",
          title = paste0(model_name, " — Nash stability regions")) +
     mytheme
-
+  
   # Overlay simulation trajectory if provided
   if (!is.null(es_data) && nrow(es_data) > 0) {
     thin <- thin_for_plot(es_data)
@@ -1736,7 +1770,7 @@ fig_slope_distribution <- function(es_data = NULL,
                                    filename = NULL,
                                    width = NULL, height = NULL,
                                    title_label = "Phase Space: Strategy Slopes") {
-
+  
   if (is.null(es_data)) {
     es_data <- load_sim(model_name, condition, sigma = sigma,
                         diploid_filter = diploid)
@@ -1745,7 +1779,7 @@ fig_slope_distribution <- function(es_data = NULL,
       return(invisible(NULL))
     }
   }
-
+  
   if (!"mS" %in% names(es_data) || !"mV" %in% names(es_data)) {
     warning("Data must include mS and mV columns (ER run)")
     return(invisible(NULL))
@@ -1764,16 +1798,16 @@ fig_slope_distribution <- function(es_data = NULL,
   pad <- 0.15  # 15% padding
   xlim <- q_mS + c(-1, 1) * diff(q_mS) * pad
   ylim <- q_mV + c(-1, 1) * diff(q_mV) * pad
-
+  
   # Classify interior vs boundary
   thin <- thin %>%
     mutate(
       prod_slopes = mS * mV,
       interior = abs(prod_slopes) < 1
     )
-
+  
   pct_interior <- mean(thin$interior, na.rm = TRUE) * 100
-
+  
   # Plot unstable first, then stable on top so blue is visible
   p <- ggplot(thin, aes(x = mS, y = mV)) +
     geom_hline(yintercept = 0, color = "gray70", linewidth = 0.3) +
@@ -1817,14 +1851,14 @@ fig_nash_combined <- function(model_name = "acute",
                               diploid = NULL,
                               width = NULL, height = NULL,
                               filename = "Figure6_Nash") {
-
+  
   if (is.null(es_data)) {
     es_data <- load_sim(model_name, condition, sigma = sigma,
                         diploid_filter = diploid)
   }
-
+  
   pA <- fig_nash_violation_map(model_name, es_data)
-
+  
   pB <- if (!is.null(es_data) && "mS" %in% names(es_data))
     fig_slope_distribution(es_data)
   else
@@ -1853,7 +1887,7 @@ fig_strategy_evolution <- function(es_data = NULL, model_name = "acute",
                                    diploid = NULL,
                                    filename = "Figure_strategy_params",
                                    width = NULL, height = NULL) {
-
+  
   if (is.null(es_data)) {
     es_data <- load_sim(model_name, condition, sigma = sigma,
                         diploid_filter = diploid)
@@ -1862,7 +1896,7 @@ fig_strategy_evolution <- function(es_data = NULL, model_name = "acute",
       return(invisible(NULL))
     }
   }
-
+  
   thin <- es_data %>%
     mutate(row_num = row_number()) %>%
     filter(row_num %% 10 == 0)
@@ -2059,32 +2093,32 @@ scale_color_condition <- function(...)
 load_all_conditions <- function(model_name, sigma = 0.1, diploid = NULL,
                                 include_pinned = FALSE, gamma_filter = 0.01) {
   cat <- discover_experiments()
-
+  
   # Filter to model
   sub <- cat %>% filter(fitness == model_name)
-
+  
   # Diploid filter
   if (!is.null(diploid)) sub <- sub %>% filter(diploid == !!diploid)
-
+  
   # Sigma filter
   if (!is.null(sigma)) {
     sub <- sub %>% filter(abs(std_dev_move - sigma) < 1e-6)
   }
-
+  
   # Gamma filter — default to 0.01 to exclude gamma-sweep runs
   # NA gamma means legacy config (default 0.01), so include those too
   if (!is.null(gamma_filter)) {
     sub <- sub %>% filter(is.na(gamma) | abs(gamma - gamma_filter) < 1e-6)
   }
-
+  
   # Exclude or include pinned runs
-
+  
   if (!include_pinned) {
     sub <- sub %>% filter(is.na(fix_host), is.na(fix_path))
   }
-
+  
   if (nrow(sub) == 0) return(tibble())
-
+  
   # Nice condition labels — ordered ET/ET -> mixed -> ER/ER
   cond_labels <- c(
     "EThost_ETpath" = "ET / ET",
@@ -2093,14 +2127,14 @@ load_all_conditions <- function(model_name, sigma = 0.1, diploid = NULL,
     "ERhost_ERpath" = "ER / ER"
   )
   cond_order <- c("ET / ET", "ET host / ER path",
-                   "ER host / ET path", "ER / ER")
-
+                  "ER host / ET path", "ER / ER")
+  
   all_df <- load_sim_set(sub) %>%
     mutate(
       scenario = factor(cond_labels[condition], levels = cond_order),
       sigma_label = sprintf("\u03c3 = %g", sigma)
     )
-
+  
   # Label pinned runs
   if (include_pinned) {
     all_df <- all_df %>%
@@ -2113,8 +2147,204 @@ load_all_conditions <- function(model_name, sigma = 0.1, diploid = NULL,
         )
       )
   }
-
+  
   all_df
+}
+
+
+# =============================================================================
+# REPLICATE-AWARE LOADING AND PLOTTING
+# =============================================================================
+
+#' Load all replicates for a given model and condition(s)
+#'
+#' Discovers runs tagged with rep1, rep2, ... and loads them into a single
+#' data frame with a `rep` column. Runs without a rep tag are treated as rep=0
+#' (the original / baseline run).
+#'
+#' @param model_name Fitness model name
+#' @param sigma Step size filter (default 0.1)
+#' @param diploid Diploid filter (NULL = any)
+#' @param gamma_filter Gamma filter (default 0.01; NULL = all)
+#' @param conditions Character vector of conditions to load (NULL = all 4)
+#' @return tibble with columns: gen, v, s, condition, scenario, rep, ...
+load_replicates <- function(model_name, sigma = 0.1, diploid = NULL,
+                            gamma_filter = 0.01, conditions = NULL) {
+  cat <- discover_experiments()
+  
+  sub <- cat %>% filter(fitness == model_name)
+  
+  if (!is.null(diploid)) sub <- sub %>% filter(diploid == !!diploid)
+  if (!is.null(sigma))   sub <- sub %>% filter(abs(std_dev_move - sigma) < 1e-6)
+  if (!is.null(gamma_filter)) {
+    sub <- sub %>% filter(is.na(gamma) | abs(gamma - gamma_filter) < 1e-6)
+  }
+  # Exclude pinned runs
+  sub <- sub %>% filter(is.na(fix_host), is.na(fix_path))
+  
+  if (!is.null(conditions)) {
+    sub <- sub %>% filter(condition %in% conditions)
+  }
+  
+  if (nrow(sub) == 0) {
+    warning("No experiments found for ", model_name)
+    return(tibble())
+  }
+  
+  # Nice labels
+  cond_labels <- c(
+    "EThost_ETpath" = "ET / ET",
+    "EThost_ERpath" = "ET host / ER path",
+    "ERhost_ETpath" = "ER host / ET path",
+    "ERhost_ERpath" = "ER / ER"
+  )
+  cond_order <- c("ET / ET", "ET host / ER path",
+                  "ER host / ET path", "ER / ER")
+  
+  # Load each row, tagging with rep
+  all_dfs <- lapply(seq_len(nrow(sub)), function(i) {
+    row <- sub[i, ]
+    df <- read_csv(row$csv, show_col_types = FALSE)
+    rep_val <- if (is.na(row$rep)) 0L else as.integer(row$rep)
+    df %>% mutate(
+      condition = row$condition,
+      scenario  = factor(cond_labels[row$condition], levels = cond_order),
+      rep       = rep_val,
+      rep_label = paste0("rep ", rep_val)
+    )
+  })
+  
+  bind_rows(all_dfs)
+}
+
+
+#' Figure: Overlay replicate time series
+#'
+#' Plots v and s time series with replicates overlaid as semi-transparent lines.
+#' Faceted by condition (columns).
+#'
+#' @param model_name Fitness model name
+#' @param sigma Step size (default 0.1)
+#' @param diploid Diploid filter
+#' @param conditions Which conditions to plot (NULL = all)
+#' @param alpha Transparency for replicate lines (default 0.4)
+#' @param log_time Use log10 x-axis (default TRUE)
+fig_replicate_timeseries <- function(model_name = "taylor",
+                                     sigma = 0.1, diploid = NULL,
+                                     conditions = NULL,
+                                     alpha = 0.4, log_time = TRUE,
+                                     width = NULL, height = NULL,
+                                     filename = NULL) {
+  
+  df <- load_replicates(model_name, sigma = sigma, diploid = diploid,
+                        conditions = conditions)
+  if (nrow(df) == 0) {
+    warning("No replicate data found"); return(invisible(NULL))
+  }
+  
+  n_reps <- length(unique(df$rep))
+  n_conds <- length(unique(df$scenario))
+  cat("Plotting", n_reps, "replicates across", n_conds, "conditions\n")
+  
+  # Virulence panel
+  p_v <- ggplot(df, aes(x = gen, y = v, color = factor(rep), group = rep)) +
+    geom_line(alpha = alpha, linewidth = 0.3) +
+    facet_wrap(~scenario, nrow = 1, scales = "free_y") +
+    labs(y = "Virulence (v)", x = NULL, color = "Replicate") +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "none",
+          strip.text = element_text(face = "bold", size = 10))
+  
+  # Clearance panel
+  p_s <- ggplot(df, aes(x = gen, y = s, color = factor(rep), group = rep)) +
+    geom_line(alpha = alpha, linewidth = 0.3) +
+    facet_wrap(~scenario, nrow = 1, scales = "free_y") +
+    labs(y = "Clearance (c)", x = "Generation", color = "Replicate") +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "bottom",
+          strip.text = element_blank())
+  
+  if (log_time) {
+    p_v <- p_v + scale_x_log10(labels = scales::label_comma())
+    p_s <- p_s + scale_x_log10(labels = scales::label_comma())
+  }
+  
+  # Use distinguishable colors for replicates
+  rep_cols <- c("0" = "#2D3748", "1" = "#1B9E77", "2" = "#D95F02",
+                "3" = "#7570B3", "4" = "#E7298A", "5" = "#66A61E",
+                "6" = "#E6AB02", "7" = "#A6761D", "8" = "#666666",
+                "9" = "#1F78B4")
+  p_v <- p_v + scale_color_manual(values = rep_cols, na.value = "#999999")
+  p_s <- p_s + scale_color_manual(values = rep_cols, na.value = "#999999")
+  
+  p <- p_v / p_s + plot_annotation(
+    title = paste0(str_to_title(model_name), " — Replicate Overlay"),
+    subtitle = paste0(n_reps, " replicates, \u03c3 = ", sigma)
+  )
+  
+  # Save
+  if (is.null(filename)) {
+    filename <- paste0("Replicate_timeseries_", model_name)
+  }
+  w <- width  %||% max(8, n_conds * 3)
+  h <- height %||% 6
+  ggsave(paste0(filename, ".pdf"), p, width = w, height = h)
+  ggsave(paste0(filename, ".png"), p, width = w, height = h, dpi = 200)
+  cat("Saved:", filename, ".pdf/.png\n")
+  p
+}
+
+
+#' Figure: Replicate trait density overlay
+#'
+#' Shows density distributions of v and s across replicates, 
+#' faceted by condition. Good for checking whether replicates
+#' converge to similar distributions.
+fig_replicate_density <- function(model_name = "taylor",
+                                  sigma = 0.1, diploid = NULL,
+                                  conditions = NULL,
+                                  width = NULL, height = NULL,
+                                  filename = NULL) {
+  
+  df <- load_replicates(model_name, sigma = sigma, diploid = diploid,
+                        conditions = conditions)
+  if (nrow(df) == 0) {
+    warning("No replicate data found"); return(invisible(NULL))
+  }
+  
+  n_reps <- length(unique(df$rep))
+  n_conds <- length(unique(df$scenario))
+  
+  long_df <- df %>%
+    pivot_longer(cols = c(v, s), names_to = "trait",
+                 values_to = "value") %>%
+    mutate(trait = ifelse(trait == "v", "Virulence (v)", "Clearance (c)"))
+  
+  p <- ggplot(long_df, aes(x = value, fill = factor(rep))) +
+    geom_density(alpha = 0.3, linewidth = 0.3) +
+    facet_grid(trait ~ scenario, scales = "free") +
+    labs(x = "Trait value", y = "Density", fill = "Replicate",
+         title = paste0(str_to_title(model_name), " — Replicate Trait Distributions"),
+         subtitle = paste0(n_reps, " replicates")) +
+    theme_minimal(base_size = 11) +
+    theme(legend.position = "bottom",
+          strip.text = element_text(face = "bold"))
+  
+  rep_cols <- c("0" = "#2D3748", "1" = "#1B9E77", "2" = "#D95F02",
+                "3" = "#7570B3", "4" = "#E7298A", "5" = "#66A61E",
+                "6" = "#E6AB02", "7" = "#A6761D", "8" = "#666666",
+                "9" = "#1F78B4")
+  p <- p + scale_fill_manual(values = rep_cols, na.value = "#999999")
+  
+  if (is.null(filename)) {
+    filename <- paste0("Replicate_density_", model_name)
+  }
+  w <- width  %||% max(8, n_conds * 2.5)
+  h <- height %||% 6
+  ggsave(paste0(filename, ".pdf"), p, width = w, height = h)
+  ggsave(paste0(filename, ".png"), p, width = w, height = h, dpi = 200)
+  cat("Saved:", filename, ".pdf/.png\n")
+  p
 }
 
 
@@ -2128,17 +2358,17 @@ fig_ts_stats <- function(model_name = "acute",
                          window = 2000, step = 500,
                          width = NULL, height = NULL,
                          filename = "Figure_ts_stats") {
-
+  
   all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
-
+  
   # Grouping columns depend on what varies
   grp_cols <- "scenario"
   if (is.null(sigma)) grp_cols <- c(grp_cols, "sigma_label")
   if (include_pinned) grp_cols <- c(grp_cols, "run_type")
-
+  
   # --- CV & spectral slope in sliding windows ---
   win_stats <- all_df %>%
     group_by(across(all_of(grp_cols))) %>%
@@ -2156,11 +2386,11 @@ fig_ts_stats <- function(model_name = "acute",
         ))
       }) %>% bind_rows()
     }) %>% bind_rows()
-
+  
   if (nrow(win_stats) == 0) {
     warning("Windows too large for data"); return(invisible(NULL))
   }
-
+  
   # --- Correlation length on the FULL time series per group ---
   corr_stats <- all_df %>%
     group_by(across(all_of(grp_cols))) %>%
@@ -2169,7 +2399,7 @@ fig_ts_stats <- function(model_name = "acute",
       corr_len_s = calc_correlation_length(s),
       .groups = "drop"
     )
-
+  
   # Combine into long format
   win_long <- win_stats %>%
     pivot_longer(-all_of(grp_cols),
@@ -2183,7 +2413,7 @@ fig_ts_stats <- function(model_name = "acute",
       ),
       stat = factor(stat, levels = c("CV", "Spectral slope"))
     )
-
+  
   corr_long <- corr_stats %>%
     pivot_longer(-all_of(grp_cols),
                  names_to = "metric", values_to = "value") %>%
@@ -2191,20 +2421,20 @@ fig_ts_stats <- function(model_name = "acute",
     mutate(
       trait = ifelse(grepl("_v$", metric), "virulence (v)", "clearance (c)")
     )
-
+  
   # Build x-axis labels
   if (include_pinned) {
     win_long <- win_long %>%
       mutate(x_label = factor(paste0(scenario, "\n", run_type),
-             levels = unique(paste0(scenario, "\n", run_type))))
+                              levels = unique(paste0(scenario, "\n", run_type))))
     corr_long <- corr_long %>%
       mutate(x_label = factor(paste0(scenario, "\n", run_type),
-             levels = unique(paste0(scenario, "\n", run_type))))
+                              levels = unique(paste0(scenario, "\n", run_type))))
   } else {
     win_long  <- win_long  %>% mutate(x_label = scenario)
     corr_long <- corr_long %>% mutate(x_label = scenario)
   }
-
+  
   # Top panels: CV & spectral slope (windowed, violin+box)
   p_top <- ggplot(win_long, aes(x = x_label, y = value, fill = scenario)) +
     geom_violin(alpha = 0.5, scale = "width") +
@@ -2216,7 +2446,7 @@ fig_ts_stats <- function(model_name = "acute",
     theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
           legend.position = "none",
           strip.text = element_text(size = 12))
-
+  
   # Bottom panel: correlation length (full series, bar chart)
   p_bot <- ggplot(corr_long, aes(x = x_label, y = value, fill = scenario)) +
     geom_col(alpha = 0.7, width = 0.6) +
@@ -2227,11 +2457,11 @@ fig_ts_stats <- function(model_name = "acute",
     theme(axis.text.x = element_text(angle = 30, hjust = 1),
           legend.position = "none",
           strip.text = element_blank())
-
+  
   p <- (p_top / p_bot) +
     plot_layout(heights = c(2, 1)) +
     plot_annotation(title = paste0(model_name, " — time-series statistics"))
-
+  
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 9
     h <- if (!is.null(height)) height else 9
@@ -2254,17 +2484,17 @@ fig_acf_decay <- function(model_name = "acute",
                           max_lag = 10000, thin_acf = 10,
                           width = NULL, height = NULL,
                           filename = "Figure_acf_decay") {
-
+  
   all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
-
+  
   # Grouping
   grp_cols <- "scenario"
   if (is.null(sigma)) grp_cols <- c(grp_cols, "sigma_label")
   if (include_pinned) grp_cols <- c(grp_cols, "run_type")
-
+  
   # Compute full ACF per group
   acf_list <- all_df %>%
     group_by(across(all_of(grp_cols))) %>%
@@ -2272,20 +2502,20 @@ fig_acf_decay <- function(model_name = "acute",
       n <- nrow(df)
       ml <- min(max_lag, n - 10)
       if (ml < 10) return(NULL)
-
+      
       acf_v <- tryCatch(
         as.numeric(acf(df$v, lag.max = ml, plot = FALSE)$acf[-1]),
         error = function(e) NULL)
       acf_s <- tryCatch(
         as.numeric(acf(df$s, lag.max = ml, plot = FALSE)$acf[-1]),
         error = function(e) NULL)
-
+      
       if (is.null(acf_v) && is.null(acf_s)) return(NULL)
-
+      
       lags <- seq_len(ml)
       # Thin for plotting
       keep <- seq(1, ml, by = thin_acf)
-
+      
       rows <- list()
       if (!is.null(acf_v))
         rows[[1]] <- bind_cols(key, tibble(
@@ -2295,11 +2525,11 @@ fig_acf_decay <- function(model_name = "acute",
           lag = lags[keep], acf = acf_s[keep], trait = "clearance (c)"))
       bind_rows(rows)
     }) %>% bind_rows()
-
+  
   if (nrow(acf_list) == 0) {
     warning("Could not compute ACF"); return(invisible(NULL))
   }
-
+  
   # Build line group label
   if (include_pinned) {
     acf_list <- acf_list %>%
@@ -2308,7 +2538,7 @@ fig_acf_decay <- function(model_name = "acute",
     acf_list <- acf_list %>%
       mutate(group_label = as.character(scenario))
   }
-
+  
   p <- ggplot(acf_list, aes(x = lag, y = acf, color = scenario)) +
     geom_hline(yintercept = 0, color = "gray70", linewidth = 0.3) +
     geom_line(aes(linetype = if (include_pinned) run_type else NULL,
@@ -2321,12 +2551,12 @@ fig_acf_decay <- function(model_name = "acute",
          color = "Condition") +
     mytheme +
     theme(legend.position = "bottom")
-
+  
   # Facet by sigma if multiple
   if (is.null(sigma) && n_distinct(acf_list$sigma_label) > 1) {
     p <- p + facet_grid(sigma_label ~ trait)
   }
-
+  
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 10
     h <- if (!is.null(height)) height else 5
@@ -2344,16 +2574,16 @@ fig_step_sizes <- function(model_name = "acute",
                            include_pinned = FALSE,
                            width = NULL, height = NULL,
                            filename = "Figure_step_sizes") {
-
+  
   all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
-
+  
   grp_cols <- "scenario"
   if (is.null(sigma)) grp_cols <- c(grp_cols, "sigma_label")
   if (include_pinned) grp_cols <- c(grp_cols, "run_type")
-
+  
   steps <- all_df %>%
     group_by(across(all_of(grp_cols))) %>%
     group_modify(~ calc_step_sizes(.x)) %>%
@@ -2362,15 +2592,15 @@ fig_step_sizes <- function(model_name = "acute",
                  names_to = "trait", values_to = "step") %>%
     mutate(trait = ifelse(trait == "delta_v",
                           "|delta v|", "|delta c|"))
-
+  
   if (include_pinned) {
     steps <- steps %>%
       mutate(x_label = factor(paste0(scenario, "\n", run_type),
-             levels = unique(paste0(scenario, "\n", run_type))))
+                              levels = unique(paste0(scenario, "\n", run_type))))
   } else {
     steps <- steps %>% mutate(x_label = scenario)
   }
-
+  
   p <- ggplot(steps, aes(x = x_label, y = step, fill = scenario)) +
     geom_violin(alpha = 0.5, scale = "width") +
     geom_boxplot(width = 0.12, outlier.size = 0.3, alpha = 0.8) +
@@ -2382,11 +2612,11 @@ fig_step_sizes <- function(model_name = "acute",
     mytheme +
     theme(axis.text.x = element_text(angle = 30, hjust = 1),
           legend.position = "none")
-
+  
   if (is.null(sigma) && n_distinct(steps$sigma_label) > 1) {
     p <- p + facet_grid(sigma_label ~ trait, scales = "free_y")
   }
-
+  
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 8
     h <- if (!is.null(height)) height else 5
@@ -2404,47 +2634,47 @@ fig_neutral_drift <- function(model_name = "acute",
                               include_pinned = FALSE,
                               width = NULL, height = NULL,
                               filename = "Figure_neutral_drift") {
-
+  
   all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
-
+  
   er_cols <- c("bS", "mS", "bV", "mV")
   has_er <- all(er_cols %in% names(all_df))
   if (!has_er) {
     warning("Need ER data (bS, mS, bV, mV) for neutral drift analysis")
     return(invisible(NULL))
   }
-
+  
   grp_cols <- "scenario"
   if (is.null(sigma)) grp_cols <- c(grp_cols, "sigma_label")
   if (include_pinned) grp_cols <- c(grp_cols, "run_type")
-
+  
   drift <- all_df %>%
     filter(!is.na(bS) & !is.na(mS) & !is.na(bV) & !is.na(mV)) %>%
     group_by(across(all_of(grp_cols))) %>%
     group_modify(~ identify_neutral_events(.x)) %>%
     ungroup()
-
+  
   if (nrow(drift) == 0) {
     warning("No drift data computed"); return(invisible(NULL))
   }
-
+  
   # Panel A: Fraction of neutral events
   frac_df <- drift %>%
     group_by(across(all_of(grp_cols))) %>%
     summarise(neutral_frac = mean(is_neutral, na.rm = TRUE),
               n = n(), .groups = "drop")
-
+  
   if (include_pinned) {
     frac_df <- frac_df %>%
       mutate(x_label = factor(paste0(scenario, "\n", run_type),
-             levels = unique(paste0(scenario, "\n", run_type))))
+                              levels = unique(paste0(scenario, "\n", run_type))))
   } else {
     frac_df <- frac_df %>% mutate(x_label = scenario)
   }
-
+  
   pA <- ggplot(frac_df, aes(x = x_label, y = neutral_frac, fill = scenario)) +
     geom_col(alpha = 0.7, width = 0.6) +
     scale_fill_condition() +
@@ -2454,18 +2684,18 @@ fig_neutral_drift <- function(model_name = "acute",
     mytheme +
     theme(axis.text.x = element_text(angle = 30, hjust = 1),
           legend.position = "none")
-
+  
   # Panel B: Decoupling ratio distribution
   if (include_pinned) {
     drift <- drift %>%
       mutate(x_label = factor(paste0(scenario, "\n", run_type),
-             levels = unique(paste0(scenario, "\n", run_type))))
+                              levels = unique(paste0(scenario, "\n", run_type))))
   } else {
     drift <- drift %>% mutate(x_label = scenario)
   }
-
+  
   pB <- ggplot(drift %>% filter(decoupling < quantile(decoupling, 0.99,
-                                                       na.rm = TRUE)),
+                                                      na.rm = TRUE)),
                aes(x = x_label, y = decoupling, fill = scenario)) +
     geom_violin(alpha = 0.5, scale = "width") +
     geom_boxplot(width = 0.12, outlier.size = 0.3, alpha = 0.8) +
@@ -2476,20 +2706,20 @@ fig_neutral_drift <- function(model_name = "acute",
     mytheme +
     theme(axis.text.x = element_text(angle = 30, hjust = 1),
           legend.position = "none")
-
+  
   # Facet by sigma if multiple
   if (is.null(sigma) && n_distinct(frac_df$sigma_label) > 1) {
     pA <- pA + facet_wrap(~ sigma_label)
     pB <- pB + facet_wrap(~ sigma_label)
   }
-
+  
   combined <- (pA | pB) +
     plot_annotation(
       title = paste0(model_name, " — neutral drift analysis"),
       tag_levels = "A"
     ) &
     theme(plot.tag = element_text(face = "bold", size = 16))
-
+  
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 10
     h <- if (!is.null(height)) height else 5.5
@@ -2510,48 +2740,48 @@ fig_dwell_times <- function(model_name = "acute",
                             nash_radius = NULL,
                             width = NULL, height = NULL,
                             filename = "Figure_dwell_times") {
-
+  
   all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
-
+  
   nash_pt <- find_nash(model_name)
   dom <- TRAIT_DOMAIN[[model_name]]
   if (is.null(nash_radius)) nash_radius <- (dom[2] - dom[1]) * 0.1
-
+  
   grp_cols <- "scenario"
   if (is.null(sigma)) grp_cols <- c(grp_cols, "sigma_label")
   if (include_pinned) grp_cols <- c(grp_cols, "run_type")
-
+  
   all_df <- all_df %>%
     mutate(in_region = switch(region,
-      nash = {
-        sqrt((v - nash_pt$v)^2 + (s - nash_pt$s)^2) < nash_radius
-      },
-      stable = {
-        # Only meaningful for runs where both players have ER (nonzero slopes)
-        has_slopes <- "mS" %in% names(all_df) & "mV" %in% names(all_df)
-        if (has_slopes)
-          ifelse(is.na(mS) | is.na(mV) | (mS == 0 & mV == 0),
-                 NA, abs(mS * mV) < 1)
-        else
-          rep(NA, n())
-      },
-      boundary = {
-        thresh <- (dom[2] - dom[1]) * 0.02
-        (v < dom[1] + thresh) | (v > dom[2] - thresh) |
-        (s < dom[1] + thresh) | (s > dom[2] - thresh)
-      },
-      stop("Unknown region: ", region)
+                              nash = {
+                                sqrt((v - nash_pt$v)^2 + (s - nash_pt$s)^2) < nash_radius
+                              },
+                              stable = {
+                                # Only meaningful for runs where both players have ER (nonzero slopes)
+                                has_slopes <- "mS" %in% names(all_df) & "mV" %in% names(all_df)
+                                if (has_slopes)
+                                  ifelse(is.na(mS) | is.na(mV) | (mS == 0 & mV == 0),
+                                         NA, abs(mS * mV) < 1)
+                                else
+                                  rep(NA, n())
+                              },
+                              boundary = {
+                                thresh <- (dom[2] - dom[1]) * 0.02
+                                (v < dom[1] + thresh) | (v > dom[2] - thresh) |
+                                  (s < dom[1] + thresh) | (s > dom[2] - thresh)
+                              },
+                              stop("Unknown region: ", region)
     ))
-
+  
   all_df <- all_df %>% filter(!is.na(in_region))
   if (nrow(all_df) == 0) {
     warning("No valid data for region '", region, "'")
     return(invisible(NULL))
   }
-
+  
   # Compute run lengths per group
   dwell_df <- all_df %>%
     arrange(across(all_of(grp_cols)), gen) %>%
@@ -2560,23 +2790,23 @@ fig_dwell_times <- function(model_name = "acute",
     group_by(across(all_of(c(grp_cols, "run_id", "in_region")))) %>%
     summarise(dwell = n(), .groups = "drop") %>%
     filter(in_region)
-
+  
   if (nrow(dwell_df) == 0) {
     warning("No dwell events for region '", region, "'")
     return(invisible(NULL))
   }
-
+  
   if (include_pinned) {
     dwell_df <- dwell_df %>%
       mutate(x_label = factor(paste0(scenario, "\n", run_type),
-             levels = unique(paste0(scenario, "\n", run_type))))
+                              levels = unique(paste0(scenario, "\n", run_type))))
   } else {
     dwell_df <- dwell_df %>% mutate(x_label = scenario)
   }
-
+  
   region_labels <- c(nash = "near Nash", stable = "stable (|mS mV| < 1)",
                      boundary = "at boundary")
-
+  
   p <- ggplot(dwell_df, aes(x = x_label, y = dwell, fill = scenario)) +
     geom_violin(alpha = 0.5, scale = "width") +
     geom_boxplot(width = 0.12, outlier.size = 0.3, alpha = 0.8) +
@@ -2588,11 +2818,11 @@ fig_dwell_times <- function(model_name = "acute",
     mytheme +
     theme(axis.text.x = element_text(angle = 30, hjust = 1),
           legend.position = "none")
-
+  
   if (is.null(sigma) && n_distinct(dwell_df$sigma_label) > 1) {
     p <- p + facet_wrap(~ sigma_label)
   }
-
+  
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 7
     h <- if (!is.null(height)) height else 5
@@ -2612,25 +2842,25 @@ fig_boundary_occupancy <- function(model_name = "acute",
                                    include_pinned = FALSE,
                                    width = NULL, height = NULL,
                                    filename = "Figure_boundary_occupancy") {
-
+  
   all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
-
+  
   grp_cols <- "scenario"
   if (is.null(sigma)) grp_cols <- c(grp_cols, "sigma_label")
   if (include_pinned) grp_cols <- c(grp_cols, "run_type")
-
+  
   occ <- all_df %>%
     group_by(across(all_of(grp_cols))) %>%
     group_modify(~ calc_boundary_occupancy(.x, model_name)) %>%
     ungroup()
-
+  
   # Pivot to long for plotting
   occ_long <- occ %>%
     dplyr::select(all_of(grp_cols), host_lower, host_upper,
-           path_lower, path_upper) %>%
+                  path_lower, path_upper) %>%
     pivot_longer(-all_of(grp_cols),
                  names_to = "boundary", values_to = "fraction") %>%
     mutate(
@@ -2638,15 +2868,15 @@ fig_boundary_occupancy <- function(model_name = "acute",
                       "clearance (c)", "virulence (v)"),
       side = ifelse(grepl("lower$", boundary), "lower", "upper")
     )
-
+  
   if (include_pinned) {
     occ_long <- occ_long %>%
       mutate(x_label = factor(paste0(scenario, "\n", run_type),
-             levels = unique(paste0(scenario, "\n", run_type))))
+                              levels = unique(paste0(scenario, "\n", run_type))))
   } else {
     occ_long <- occ_long %>% mutate(x_label = scenario)
   }
-
+  
   p <- ggplot(occ_long, aes(x = x_label, y = fraction, fill = side)) +
     geom_col(position = "stack", alpha = 0.8, width = 0.6) +
     facet_wrap(~ player) +
@@ -2658,12 +2888,12 @@ fig_boundary_occupancy <- function(model_name = "acute",
     mytheme +
     theme(axis.text.x = element_text(angle = 30, hjust = 1),
           legend.position = "bottom")
-
+  
   if (is.null(sigma) && "sigma_label" %in% names(occ_long) &&
       n_distinct(occ_long$sigma_label) > 1) {
     p <- p + facet_grid(sigma_label ~ player)
   }
-
+  
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 8
     h <- if (!is.null(height)) height else 5
@@ -2683,23 +2913,23 @@ fig_trait_density <- function(model_name = "acute",
                               include_pinned = FALSE,
                               width = NULL, height = NULL,
                               filename = "Figure_trait_density") {
-
+  
   all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
-
+  
   nash_pt <- find_nash(model_name)
   disp <- if (model_name %in% names(TRAIT_DISPLAY))
     TRAIT_DISPLAY[[model_name]] else TRAIT_DOMAIN[[model_name]]
-
+  
   # Clean axis breaks
   ax_breaks <- if (disp[2] <= 1) c(0, 0.25, 0.5, 0.75, 1) else pretty(disp, n = 5)
-
+  
   scenarios <- levels(all_df$scenario)
   if (is.null(scenarios)) scenarios <- sort(unique(all_df$scenario))
   n_scen <- length(scenarios)
-
+  
   # Thin scatter points for context (especially useful for concentrated conditions)
   set.seed(42)
   thin_n <- 2000
@@ -2708,16 +2938,16 @@ fig_trait_density <- function(model_name = "acute",
     filter(row_number() %in% sample(seq_len(dplyr::n()),
                                     size = min(thin_n, dplyr::n()))) %>%
     ungroup()
-
+  
   panels <- lapply(seq_along(scenarios), function(i) {
     sc <- scenarios[i]
     df_sc <- all_df %>% filter(scenario == sc)
     df_thin <- all_thin %>% filter(scenario == sc)
-
+    
     show_y <- (i == 1)
-
+    
     is_mid <- (i == ceiling(n_scen / 2))
-
+    
     p <- ggplot(df_sc, aes(x = v, y = s)) +
       geom_point(data = df_thin, aes(x = v, y = s),
                  color = "grey60", size = 0.1, alpha = 0.3,
@@ -2737,21 +2967,21 @@ fig_trait_density <- function(model_name = "acute",
       mytheme +
       theme(plot.title = element_text(size = 11, hjust = 0.5),
             legend.position = "none")
-
+    
     if (!show_y) {
       p <- p + theme(axis.text.y = element_blank(),
                      axis.ticks.y = element_blank())
     }
     p
   })
-
+  
   combined <- wrap_plots(panels, nrow = 1) +
     plot_annotation(
       title = paste0(model_name, " — trait distributions"),
       tag_levels = "A"
     ) &
     theme(plot.tag = element_text(face = "bold", size = 16))
-
+  
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 3.5 * n_scen
     h <- if (!is.null(height)) height else 4.5
@@ -2828,11 +3058,11 @@ load_gamma_sweep <- function(model_name, sigma = 0.1, diploid = TRUE,
 #' Rows = gamma values, Columns = conditions
 #' Shows v and s in separate grids
 fig_gamma_timeseries <- function(model_name = "acute",
-                                  sigma = 0.1, diploid = TRUE,
-                                  conditions = NULL,
-                                  max_pts = 100,
-                                  width = NULL, height = NULL,
-                                  filename = "Gamma_sweep_timeseries") {
+                                 sigma = 0.1, diploid = TRUE,
+                                 conditions = NULL,
+                                 max_pts = 100,
+                                 width = NULL, height = NULL,
+                                 filename = "Gamma_sweep_timeseries") {
   
   all_df <- load_gamma_sweep(model_name, sigma, diploid, conditions, max_pts)
   if (nrow(all_df) == 0) return(invisible(NULL))
@@ -2884,10 +3114,10 @@ fig_gamma_timeseries <- function(model_name = "acute",
 #' Figure: Gamma sweep summary statistics
 #' Compares CV, realized step sizes, and neutral drift fraction across gamma values
 fig_gamma_summary <- function(model_name = "acute",
-                               sigma = 0.1, diploid = TRUE,
-                               conditions = NULL,
-                               width = NULL, height = NULL,
-                               filename = "Gamma_sweep_summary") {
+                              sigma = 0.1, diploid = TRUE,
+                              conditions = NULL,
+                              width = NULL, height = NULL,
+                              filename = "Gamma_sweep_summary") {
   
   all_df <- load_gamma_sweep(model_name, sigma, diploid, conditions)
   if (nrow(all_df) == 0) return(invisible(NULL))
@@ -2926,7 +3156,7 @@ fig_gamma_summary <- function(model_name = "acute",
     mutate(trait = ifelse(trait == "cv_v", "CV(v)", "CV(c)"))
   
   p_cv <- ggplot(cv_df, aes(x = gamma_label, y = cv, 
-                             fill = scenario, group = scenario)) +
+                            fill = scenario, group = scenario)) +
     geom_col(position = position_dodge(0.8), width = 0.7, alpha = 0.8) +
     facet_wrap(~ trait) +
     scale_fill_condition() +
@@ -2954,7 +3184,7 @@ fig_gamma_summary <- function(model_name = "acute",
     
     if (nrow(drift) > 0) {
       p_drift <- ggplot(drift, aes(x = gamma_label, y = neutral_frac, 
-                                    fill = scenario)) +
+                                   fill = scenario)) +
         geom_col(position = position_dodge(0.8), width = 0.7, alpha = 0.8) +
         scale_fill_condition() +
         labs(x = NULL, y = "Fraction neutral",
@@ -3054,20 +3284,20 @@ fig_gamma_summary <- function(model_name = "acute",
 # as expected, and reveals whether ER status modifies the host/path ratio.
 
 fig_gamma_who_mutates <- function(model_name = "acute",
-                                   sigma = 0.1, diploid = TRUE,
-                                   conditions = NULL,
-                                   width = NULL, height = NULL,
-                                   filename = "Gamma_who_mutates") {
-
+                                  sigma = 0.1, diploid = TRUE,
+                                  conditions = NULL,
+                                  width = NULL, height = NULL,
+                                  filename = "Gamma_who_mutates") {
+  
   all_df <- load_gamma_sweep(model_name, sigma, diploid, conditions)
   if (nrow(all_df) == 0) return(invisible(NULL))
-
+  
   # The mutator column records "host" or "path" for each substitution event
   if (!"mutator" %in% names(all_df)) {
     warning("No 'mutator' column found — need full CSV with mutator info")
     return(invisible(NULL))
   }
-
+  
   # Compute host-mutation fraction per (gamma, condition)
   frac_df <- all_df %>%
     filter(mutator %in% c("host", "path")) %>%
@@ -3079,15 +3309,15 @@ fig_gamma_who_mutates <- function(model_name = "acute",
       frac_host = n_host / n_total,
       .groups = "drop"
     )
-
+  
   # Expected line: frac_host = gamma (if rates scale linearly)
   expected <- tibble(
     gamma = seq(0, 1, 0.01),
     expected_frac = gamma  # naive expectation
   )
-
+  
   p <- ggplot(frac_df, aes(x = gamma, y = frac_host, 
-                             color = scenario, shape = scenario)) +
+                           color = scenario, shape = scenario)) +
     geom_line(data = expected, aes(x = gamma, y = expected_frac),
               inherit.aes = FALSE,
               color = "gray50", linetype = "dashed", linewidth = 0.5) +
@@ -3103,7 +3333,7 @@ fig_gamma_who_mutates <- function(model_name = "acute",
     coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
     mytheme +
     theme(legend.position = "bottom")
-
+  
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 7
     h <- if (!is.null(height)) height else 5
@@ -3128,13 +3358,13 @@ fig_gamma_who_mutates <- function(model_name = "acute",
 # where the fast player is always the ER player vs always the ET player.
 
 fig_gamma_symmetry_test <- function(model_name = "acute",
-                                     sigma = 0.1, diploid = TRUE,
-                                     width = NULL, height = NULL,
-                                     filename = "Gamma_symmetry_test") {
-
+                                    sigma = 0.1, diploid = TRUE,
+                                    width = NULL, height = NULL,
+                                    filename = "Gamma_symmetry_test") {
+  
   all_df <- load_gamma_sweep(model_name, sigma, diploid)
   if (nrow(all_df) == 0) return(invisible(NULL))
-
+  
   # Define the matched pairs
   # Pair A: ER player is fast
   #   - ET-host / ER-path with γ=0.01 (path=ER is fast)
@@ -3142,7 +3372,7 @@ fig_gamma_symmetry_test <- function(model_name = "acute",
   # Pair B: ER player is slow
   #   - ET-host / ER-path with γ=0.99 (path=ER is slow)
   #   - ER-host / ET-path with γ=0.01 (host=ER is slow)
-
+  
   pairs <- all_df %>%
     filter(condition %in% c("EThost_ERpath", "ERhost_ETpath")) %>%
     mutate(
@@ -3164,16 +3394,16 @@ fig_gamma_symmetry_test <- function(model_name = "acute",
       )
     ) %>%
     filter(!is.na(pair_label))
-
+  
   if (nrow(pairs) == 0) {
     warning("Need gamma = 0.01 and 0.99 for both asymmetric conditions.\n",
             "  Run: python run_experiments.py -f ", model_name,
             " --gamma-sweep 0.01,0.5,0.99 --diploid")
     return(invisible(NULL))
   }
-
+  
   yax <- auto_trait_axis(model_name)
-
+  
   # Panel A: Virulence density by matched pair
   p_v <- ggplot(pairs, aes(x = v, fill = pair_label, color = pair_label)) +
     geom_density(alpha = 0.3, linewidth = 0.6) +
@@ -3184,7 +3414,7 @@ fig_gamma_symmetry_test <- function(model_name = "acute",
     mytheme +
     theme(legend.position = "bottom",
           legend.text = element_text(size = 8))
-
+  
   # Panel B: Clearance density by matched pair
   p_s <- ggplot(pairs, aes(x = s, fill = pair_label, color = pair_label)) +
     geom_density(alpha = 0.3, linewidth = 0.6) +
@@ -3195,7 +3425,7 @@ fig_gamma_symmetry_test <- function(model_name = "acute",
     mytheme +
     theme(legend.position = "bottom",
           legend.text = element_text(size = 8))
-
+  
   # Panel C: Summary stats comparison
   stats <- pairs %>%
     group_by(pair_label, speed_class) %>%
@@ -3208,7 +3438,7 @@ fig_gamma_symmetry_test <- function(model_name = "acute",
     ) %>%
     pivot_longer(c(cv_v, cv_s), names_to = "metric", values_to = "value") %>%
     mutate(metric = ifelse(metric == "cv_v", "CV(v)", "CV(c)"))
-
+  
   p_stats <- ggplot(stats, aes(x = pair_label, y = value, fill = speed_class)) +
     geom_col(alpha = 0.8, width = 0.7) +
     facet_wrap(~ metric, scales = "free_y") +
@@ -3216,7 +3446,7 @@ fig_gamma_symmetry_test <- function(model_name = "acute",
     mytheme +
     theme(axis.text.x = element_text(angle = 35, hjust = 1, size = 8),
           legend.position = "none")
-
+  
   combined <- (p_v | p_s) / p_stats +
     plot_annotation(
       title = paste0(model_name, " — ER speed symmetry test"),
@@ -3224,7 +3454,7 @@ fig_gamma_symmetry_test <- function(model_name = "acute",
       tag_levels = "A"
     ) +
     plot_layout(heights = c(2, 1))
-
+  
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 10
     h <- if (!is.null(height)) height else 10
@@ -3248,20 +3478,20 @@ fig_gamma_trait_density <- function(model_name = "acute",
                                     sigma = 0.1, diploid = TRUE,
                                     width = NULL, height = NULL,
                                     filename = "Gamma_trait_density") {
-
+  
   all_df <- load_gamma_sweep(model_name, sigma, diploid,
-                              conditions = condition_filter)
+                             conditions = condition_filter)
   if (nrow(all_df) == 0) return(invisible(NULL))
-
+  
   yax <- auto_trait_axis(model_name)
-
+  
   # Get Nash equilibrium for reference
   nash <- tryCatch({
     mod <- FITNESS_MODELS[[model_name]]
     nash_eq(mod$fH, mod$fP, mod$params,
             TRAIT_DOMAIN[[model_name]][1], TRAIT_DOMAIN[[model_name]][2])
   }, error = function(e) list(v = NA, s = NA))
-
+  
   p <- ggplot(all_df, aes(x = v, y = s)) +
     geom_hex(bins = 40, alpha = 0.9) +
     scale_fill_viridis_c(option = "magma", trans = "log10",
@@ -3274,14 +3504,14 @@ fig_gamma_trait_density <- function(model_name = "acute",
                         condition_filter, " — trait density across \u03b3")) +
     mytheme +
     theme(strip.text = element_text(size = 10))
-
+  
   # Add Nash point if found
   if (!is.na(nash$v)) {
     p <- p + geom_point(data = data.frame(v = nash$v, s = nash$s),
                         aes(v, s), color = "white", shape = 4,
                         size = 3, stroke = 1.5)
   }
-
+  
   if (!is.null(filename)) {
     n_gammas <- n_distinct(all_df$gamma_label)
     w <- if (!is.null(width)) width else max(8, 3 * n_gammas)
@@ -3303,19 +3533,19 @@ fig_gamma_trait_density <- function(model_name = "acute",
 # changes the TOTAL rate of evolution.
 
 fig_gamma_tempo <- function(model_name = "acute",
-                             sigma = 0.1, diploid = TRUE,
-                             conditions = NULL,
-                             width = NULL, height = NULL,
-                             filename = "Gamma_tempo") {
-
+                            sigma = 0.1, diploid = TRUE,
+                            conditions = NULL,
+                            width = NULL, height = NULL,
+                            filename = "Gamma_tempo") {
+  
   all_df <- load_gamma_sweep(model_name, sigma, diploid, conditions)
   if (nrow(all_df) == 0) return(invisible(NULL))
-
+  
   if (!"mutator" %in% names(all_df)) {
     warning("No 'mutator' column — need full CSV")
     return(invisible(NULL))
   }
-
+  
   # Count substitution events per unit evolutionary time
   tempo_df <- all_df %>%
     filter(mutator %in% c("host", "path")) %>%
@@ -3339,9 +3569,9 @@ fig_gamma_tempo <- function(model_name = "acute",
       rate_type == "rate_path"  ~ "Pathogen subs / gen",
       rate_type == "rate_total" ~ "Total subs / gen"
     ))
-
+  
   p <- ggplot(tempo_df, aes(x = gamma, y = rate, 
-                              color = scenario, shape = rate_type)) +
+                            color = scenario, shape = rate_type)) +
     geom_point(size = 2.5, alpha = 0.9) +
     geom_line(aes(group = interaction(scenario, rate_type)), alpha = 0.4) +
     facet_wrap(~ rate_type, scales = "free_y") +
@@ -3352,7 +3582,7 @@ fig_gamma_tempo <- function(model_name = "acute",
          color = "Condition") +
     mytheme +
     theme(legend.position = "bottom")
-
+  
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 12
     h <- if (!is.null(height)) height else 5
@@ -3373,16 +3603,16 @@ fig_gamma_tempo <- function(model_name = "acute",
 # If gamma matters, fast-player traits should decorrelate faster.
 
 fig_gamma_acf <- function(model_name = "acute",
-                           condition_filter = "ERhost_ERpath",
-                           sigma = 0.1, diploid = TRUE,
-                           max_lag = 5000,
-                           width = NULL, height = NULL,
-                           filename = "Gamma_acf") {
-
+                          condition_filter = "ERhost_ERpath",
+                          sigma = 0.1, diploid = TRUE,
+                          max_lag = 5000,
+                          width = NULL, height = NULL,
+                          filename = "Gamma_acf") {
+  
   all_df <- load_gamma_sweep(model_name, sigma, diploid,
-                              conditions = condition_filter)
+                             conditions = condition_filter)
   if (nrow(all_df) == 0) return(invisible(NULL))
-
+  
   acf_list <- all_df %>%
     group_by(gamma_label) %>%
     group_modify(~ {
@@ -3394,7 +3624,7 @@ fig_gamma_acf <- function(model_name = "acute",
       )
     }) %>%
     ungroup()
-
+  
   p <- ggplot(acf_list, aes(x = lag, y = acf, color = gamma_label)) +
     geom_hline(yintercept = 0, color = "gray70", linewidth = 0.3) +
     geom_line(alpha = 0.8, linewidth = 0.6) +
@@ -3405,7 +3635,7 @@ fig_gamma_acf <- function(model_name = "acute",
          color = NULL) +
     mytheme +
     theme(legend.position = "bottom")
-
+  
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 10
     h <- if (!is.null(height)) height else 5
@@ -3418,7 +3648,7 @@ fig_gamma_acf <- function(model_name = "acute",
 
 
 # ============================================================================
-# CALL BLOCK — add to bottom of Plots.R (commented, like other call blocks)
+# CALL BLOCK 
 # ============================================================================
 
 # # --- Gamma sweep figures ---
@@ -3645,5 +3875,3 @@ fig_trait_density("taylor", sigma = 0.1, diploid = TRUE, filename = "Trait_densi
 fig_boundary_occupancy("acute", sigma = 0.1, diploid = TRUE, filename = "Boundary_occupancy_acute")
 fig_boundary_occupancy("minimal", sigma = 0.1, diploid = TRUE, filename = "Boundary_occupancy_minimal")
 fig_boundary_occupancy("taylor", sigma = 0.1, diploid = TRUE, filename = "Boundary_occupancy_taylor")
-
-

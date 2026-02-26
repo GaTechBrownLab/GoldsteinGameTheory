@@ -73,6 +73,7 @@ def run_single_condition(
     fix_host_trait: float = None,
     fix_path_trait: float = None,
     gamma: float = None,
+    rep: int = None,
 ) -> str:
     """Run a single experimental condition.
     
@@ -84,6 +85,10 @@ def run_single_condition(
         0.50 = equal rates
         0.99 = host-fast (reversed asymmetry)
         None = use simulation.py default (0.01).
+    rep : int, optional
+        Replicate number. Tags the output directory with rep{N}
+        and offsets the seed by (rep - 1) for reproducibility.
+        rep=1 uses the base seed, rep=2 uses base+1, etc.
     """
     
 
@@ -110,6 +115,8 @@ def run_single_condition(
         tags.append(f"fixH{fix_host_trait}")
     if fix_path_trait is not None:
         tags.append(f"fixP{fix_path_trait}")
+    if rep is not None:
+        tags.append(f"rep{rep}")
     if tags:
         dir_name += "_" + "_".join(tags)
     
@@ -142,7 +149,12 @@ def run_single_condition(
         sim.prob_host_mutate = gamma
     sim.max_gens = params["max_gens"]
     sim.burn_in_gens = params["burn_in_gens"]
-    sim.seed = params["seed_base"]
+    
+    # Seed: offset by replicate number for reproducibility
+    effective_seed = params["seed_base"]
+    if rep is not None:
+        effective_seed = params["seed_base"] + (rep - 1)
+    sim.seed = effective_seed
     sim.WRITE_EVERY_FAST = params["write_every"]
     sim.RUNTIME_MODE = "fast"
     
@@ -165,6 +177,9 @@ def run_single_condition(
         "prob_host_mutate": sim.prob_host_mutate,
         "FIX_HOST_TRAIT": fix_host_trait if fix_host_trait is not None else False,
         "FIX_PATH_TRAIT": fix_path_trait if fix_path_trait is not None else False,
+        "rep": rep,
+        "seed_base": params["seed_base"],
+        "effective_seed": effective_seed,
         "timestamp": datetime.datetime.now().isoformat(),
         "parameters": params.copy(),
     }
@@ -192,11 +207,13 @@ def run_single_condition(
         print(f"  Host trait PINNED at s={fix_host_trait}")
     if fix_path_trait is not None:
         print(f"  Path trait PINNED at v={fix_path_trait}")
+    if rep is not None:
+        print(f"  Replicate: {rep}  (seed: {effective_seed})")
     print(f"  Output: {output_csv}")
     print(f"  Generations: {params['max_gens']:,}")
     
     # === RUN SIMULATION ===
-    rng = random.Random(params["seed_base"])
+    rng = random.Random(effective_seed)
     simulation = sim.Simulation(evolved_strategy=evolved_strategy, rng=rng)
     sim.run_with_runtime_modes(simulation, output_csv)
     
@@ -221,6 +238,7 @@ def run_all_conditions(
     fix_host_trait: float = None,
     fix_path_trait: float = None,
     gamma: float = None,
+    rep: int = None,
 ) -> dict:
     """Run all 4 conditions for a fitness model."""
     results = {}
@@ -237,6 +255,7 @@ def run_all_conditions(
             fix_host_trait=fix_host_trait,
             fix_path_trait=fix_path_trait,
             gamma=gamma,
+            rep=rep,
         )
         results[condition] = output_csv
     
@@ -251,6 +270,7 @@ def run_gamma_sweep(
     output_base: str = "results",
     sigma: float = 0.1,
     diploid: bool = True,
+    rep: int = None,
 ) -> dict:
     """Sweep mutation rate asymmetry (gamma) across conditions.
     
@@ -301,6 +321,7 @@ def run_gamma_sweep(
                 sigma=sigma,
                 diploid=diploid,
                 gamma=gamma,
+                rep=rep,
             )
             results[(gamma, cond_name)] = output_csv
     
@@ -345,6 +366,11 @@ Gamma sweep (all conditions):
   python run_experiments.py -f acute --gamma-sweep 0.01,0.5,0.99 --diploid
 Gamma sweep (ER-ER only):
   python run_experiments.py -f acute -c ERhost_ERpath --gamma-sweep 0.01,0.1,0.5,0.9,0.99 --diploid
+Replicates:
+  python run_experiments.py -f taylor --diploid --rep 1
+  python run_experiments.py -f taylor --diploid --rep 2
+  python run_experiments.py -f taylor --diploid --rep 3
+  # or in a loop: for r in 1 2 3; do python run_experiments.py -f taylor --diploid --rep $r; done
         """
     )
     
@@ -373,6 +399,9 @@ Gamma sweep (ER-ER only):
     parser.add_argument("--gamma-sweep", type=str, default=None,
                         help="Comma-separated gamma values to sweep, "
                              "e.g. 0.01,0.1,0.5,0.9,0.99")
+    parser.add_argument("--rep", type=int, default=None,
+                        help="Replicate number. Tags output dir with rep{N} and "
+                             "offsets seed by (rep-1). Use --rep 1,2,3 style in a loop.")
    
     args = parser.parse_args()
     
@@ -419,6 +448,8 @@ Gamma sweep (ER-ER only):
         print(f"Host pinned at s={args.fix_host}")
     if args.fix_path is not None:
         print(f"Path pinned at v={args.fix_path}")
+    if args.rep is not None:
+        print(f"Replicate: {args.rep}  (seed offset: +{args.rep - 1})")
     
     # === Gamma sweep mode ===
     if gammas is not None:
@@ -432,6 +463,7 @@ Gamma sweep (ER-ER only):
                 output_base=args.output,
                 sigma=sigma if sigma is not None else 0.1,
                 diploid=args.diploid,
+                rep=args.rep,
             )
     else:
         # === Standard mode (with optional single gamma) ===
@@ -449,6 +481,7 @@ Gamma sweep (ER-ER only):
                     fix_host_trait=args.fix_host,
                     fix_path_trait=args.fix_path,
                     gamma=args.gamma,
+                    rep=args.rep,
                 )
             else:
                 results = run_all_conditions(
@@ -460,6 +493,7 @@ Gamma sweep (ER-ER only):
                     fix_host_trait=args.fix_host,
                     fix_path_trait=args.fix_path,
                     gamma=args.gamma,
+                    rep=args.rep,
                 )
                 print(f"\n{'='*60}")
                 print("COMPLETE - Output files:")
