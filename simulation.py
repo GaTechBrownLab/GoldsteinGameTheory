@@ -99,18 +99,13 @@ eps_HLP = 1e-3
 ONE_PLUS_EPS_HLP = 1.0 + eps_HLP
 beta_HLP = 1.0  # exponent on v in pathogen transmission-like term
 
-# --- Chronic model (from Java dead code) ---
+# --- Chronic model (Goldstein 2020, §Methods) ---
 # Mortality includes immunity-modulated virulence: (1-s) dampens v damage
 # mortality_chronic = d0 + nS*(1+eps)*s/(1+eps-s) + (1-s)*nV*(1+eps)*v/(1+eps-v)
-# Transmission = (1-s)*(v0_baseline + v)   (linear in v, reduced by immunity)
-# W_H = s / (s + mortality)
-# W_P = transmission / (s + mortality)
-d0_chronic = 0.1
-nS_chronic = 0.01
-nV_chronic = 0.1
-eps_chronic = 1.0 / 999.0       # Java: 1+1/999 ≈ 1.001
-ONE_PLUS_EPS_chronic = 1.0 + eps_chronic
-v0_baseline = 0.5               # intrinsic pathogen transmissibility
+# W_H = 1 / mortality              (expected lifetime)
+# W_P = (1-s)*v^beta / mortality    (transmission × lifetime)
+# "Unless stated otherwise, the parameters are the same as used for acute infections."
+
 
 # --- Taylor model ---
 # Host: H(v,c) = [c/(v+c)] * [b/(m0+c)]
@@ -248,26 +243,25 @@ def _path_minimal(v: float, s: float) -> float:
     return v * (1.0 - v) * (1.0 - s)
 
 def _mortality_chronic(v: float, s: float) -> float:
-    """Chronic model: immunity modulates virulence damage via (1-s) factor."""
-    dv = max(ONE_PLUS_EPS_chronic - v, 1e-12)
-    ds = max(ONE_PLUS_EPS_chronic - s, 1e-12)
-    s_term = (nS_chronic * ONE_PLUS_EPS_chronic * s) / ds
-    v_term = (1.0 - s) * (nV_chronic * ONE_PLUS_EPS_chronic * v) / dv
-    return d0_chronic + s_term + v_term
+    """Chronic model: immunity modulates virulence damage via (1-s) factor.
+    Uses same parameters as acute (d0, nS, nV, eps from _HLP)."""
+    dv = max(ONE_PLUS_EPS_HLP - v, 1e-12)
+    ds = max(ONE_PLUS_EPS_HLP - s, 1e-12)
+    s_term = (nS_HLP * ONE_PLUS_EPS_HLP * s) / ds
+    v_term = (1.0 - s) * (nV_HLP * ONE_PLUS_EPS_HLP * v) / dv
+    return d0_HLP + s_term + v_term
 
 def _host_chronic(v: float, s: float) -> float:
-    """W_H = s / (s + mortality). High clearance -> high survival."""
+    """W_H = 1/m (expected lifetime). Chronic: no clearance, just survival."""
     m = _mortality_chronic(v, s)
-    return s / (s + m) if (s + m) > 1e-12 else 0.0
+    return 1.0 / m if m > 1e-12 else 1e12
 
 def _path_chronic(v: float, s: float) -> float:
-    """W_P = (1-s)(v0+v) / (s + mortality). Transmission reduced by immunity."""
+    """W_P = (1-s)*v^beta / m (transmission × expected lifetime)."""
     m = _mortality_chronic(v, s)
-    denom = s + m
-    if denom <= 1e-12:
+    if m <= 1e-12:
         return 0.0
-    transmission = (1.0 - s) * (v0_baseline + v)
-    return transmission / denom
+    return (1.0 - s) * (v ** beta_HLP) / m
 
 def _host_taylor(v: float, s: float) -> float:
     """s = clearance (called 'c' in Taylor et al.)"""
@@ -353,23 +347,23 @@ def find_all_equilibria(bS: float, mS: float, bV: float, mV: float) -> List[Equi
     interior = _solve_interior(bS, mS, bV, mV)
 
     if not USE_BOUNDED_TRAITS:
+        # Unbounded: always use interior intersection (it's the unique crossing)
         if interior is not None:
             v0, s0 = interior
             stable = (abs(mS * mV) < 1.0)
-            if stable:
-                eqs.append(Equilibrium(v=v0, s=s0, interior=True, stable=True,
-                                       host_max=False, path_max=False, nash=True))
+            eqs.append(Equilibrium(v=v0, s=s0, interior=True, stable=stable,
+                                   host_max=False, path_max=False, nash=True))
         return eqs
 
-    # Bounded mode
+    # Bounded mode: check interior if in bounds
     if interior is not None:
         v0, s0 = interior
         if TRAIT_MIN < v0 < TRAIT_MAX and TRAIT_MIN < s0 < TRAIT_MAX:
             stable = (abs(mS*mV) < 1.0)
-            if stable:
-                eqs.append(Equilibrium(v=v0, s=s0, interior=True, stable=True,
-                                       host_max=False, path_max=False, nash=True))
+            eqs.append(Equilibrium(v=v0, s=s0, interior=True, stable=stable,
+                                   host_max=False, path_max=False, nash=True))
 
+    # Boundary candidates
     candidates: List[Tuple[float, float]] = []
     lo, hi = TRAIT_MIN, TRAIT_MAX
     candidates.extend([(lo,lo),(lo,hi),(hi,lo),(hi,hi)])
@@ -397,7 +391,58 @@ def find_all_equilibria(bS: float, mS: float, bV: float, mV: float) -> List[Equi
             path_max = (v <= TRAIT_MIN + 1e-9 or v >= TRAIT_MAX - 1e-9)
             eqs.append(Equilibrium(v=v, s=s, interior=False, stable=True,
                                    host_max=host_max, path_max=path_max, nash=True))
+
+    # Fallback: iterative fixed-point solver for clamped map.
+    # Brouwer's theorem guarantees a fixed point exists for
+    #   v -> clamp(bV + mV * clamp(bS + mS * v))
+    # Use this when no candidates passed the consistency check.
+    if len(eqs) == 0:
+        eq_iter = _solve_clamped_iterative(bS, mS, bV, mV)
+        if eq_iter is not None:
+            eqs.append(eq_iter)
+
     return eqs
+
+
+def _solve_clamped_iterative(bS: float, mS: float, bV: float, mV: float,
+                              max_iter: int = 200, tol: float = 1e-9) -> Optional[Equilibrium]:
+    """Iterate clamped response maps to find a fixed point.
+    
+    Tries multiple starting points to handle possible multiple fixed points.
+    Returns the first convergent solution found.
+    """
+    lo, hi = TRAIT_MIN, TRAIT_MAX
+    starts = [0.5 * (lo + hi), lo + 0.01, hi - 0.01, 0.25, 0.75]
+    
+    for v0 in starts:
+        v = v0
+        for _ in range(max_iter):
+            s_new = clamp01(bS + mS * v)
+            v_new = clamp01(bV + mV * s_new)
+            if abs(v_new - v) < tol:
+                # Verify consistency
+                s_final = clamp01(bS + mS * v_new)
+                if abs(s_final - s_new) < tol * 10:
+                    host_max = (s_new <= TRAIT_MIN + 1e-9 or s_new >= TRAIT_MAX - 1e-9)
+                    path_max = (v_new <= TRAIT_MIN + 1e-9 or v_new >= TRAIT_MAX - 1e-9)
+                    return Equilibrium(v=v_new, s=s_new, interior=False, 
+                                       stable=False, host_max=host_max, 
+                                       path_max=path_max, nash=True)
+            v = v_new
+    
+    # If iteration doesn't converge (2-cycle), pick best from last two points
+    # This handles oscillatory cases
+    v_a = v
+    s_a = clamp01(bS + mS * v_a)
+    v_b = clamp01(bV + mV * s_a)
+    s_b = clamp01(bS + mS * v_b)
+    # Return midpoint of the 2-cycle
+    v_mid = 0.5 * (v_a + v_b)
+    s_mid = 0.5 * (s_a + s_b)
+    host_max = (s_mid <= TRAIT_MIN + 1e-9 or s_mid >= TRAIT_MAX - 1e-9)
+    path_max = (v_mid <= TRAIT_MIN + 1e-9 or v_mid >= TRAIT_MAX - 1e-9)
+    return Equilibrium(v=v_mid, s=s_mid, interior=False, stable=False,
+                       host_max=host_max, path_max=path_max, nash=False)
 
 # ============================================================
 # Simulation (Gillespie architecture)
@@ -465,6 +510,11 @@ class Simulation:
         eqs = find_all_equilibria(self.bS, self.mS, self.bV, self.mV)
         best = _best_equilibrium_for_player(eqs, selector)
         if best is None:
+            # Should be very rare now with iterative fallback
+            import warnings
+            warnings.warn(f"No equilibrium found: bS={self.bS:.4f}, mS={self.mS:.4f}, "
+                          f"bV={self.bV:.4f}, mV={self.mV:.4f}. Using intercepts.",
+                          stacklevel=2)
             self.v, self.s = clamp01(self.bV), clamp01(self.bS)
             interior = False
             stable = False

@@ -88,7 +88,7 @@ set_theme(mytheme)
 
 # ----- Shared parameter sets -----
 
-# Acute model parameters (manuscript Table 1)
+# Acute model parameters (from paper)
 PAR_ACUTE <- list(
   d0      = 0.1,
   nS      = 0.1,      # clearance cost (immunopathology)
@@ -98,14 +98,14 @@ PAR_ACUTE <- list(
   beta    = 1.0       # transmission exponent (linear)
 )
 
-# Chronic model parameters (from Java dead code)
+# Chronic model parameters (from paper)
 PAR_CHRONIC <- list(
   d0      = 0.1,
-  nS      = 0.01,
-  nV      = 0.1,
-  eps     = 1 / 999,
-  one_eps = 1 + 1 / 999,
-  v0      = 0.5        # baseline transmissibility
+  nS      = 0.1,
+  nV      = 1.0,
+  eps     = 1e-3,
+  one_eps = 1 + 1e-3,
+  beta    = 1.0
 )
 
 # Minimal model (no extra parameters)
@@ -144,7 +144,7 @@ fH_acute <- function(v, s, p = PAR_ACUTE) {
 
 fH_chronic <- function(v, s, p = PAR_CHRONIC) {
   m <- mortality_chronic(v, s, p)
-  s / (s + m)
+  1.0 / m
 }
 
 fH_minimal <- function(v, s, ...) {
@@ -165,7 +165,7 @@ fP_acute <- function(v, s, p = PAR_ACUTE) {
 
 fP_chronic <- function(v, s, p = PAR_CHRONIC) {
   m <- mortality_chronic(v, s, p)
-  (1 - s) * (p$v0 + v) / (s + m)
+  (1 - s) * v^p$beta / m
 }
 
 fP_minimal <- function(v, s, ...) {
@@ -414,6 +414,7 @@ discover_experiments <- function(results_root = "results", refresh = FALSE) {
         gamma         = cfg$prob_host_mutate %||% NA_real_,
         diploid       = isTRUE(cfg$DIPLOID_KIMURA),
         rep           = if (is.null(cfg$rep)) NA_integer_ else as.integer(cfg$rep),
+        tag           = cfg$tag %||% NA_character_,
         effective_seed = if (is.null(cfg$effective_seed)) NA_integer_ else as.integer(cfg$effective_seed),
         fix_host      = if (is.null(cfg$FIX_HOST_TRAIT) || 
                             isFALSE(cfg$FIX_HOST_TRAIT)) NA_real_ 
@@ -473,8 +474,12 @@ list_experiments <- function(model = NULL, results_root = "results") {
         flags <- c(flags, sprintf("σ=%g", row$std_dev_move))
       if (!is.na(row$fix_host)) flags <- c(flags, sprintf("fixH=%.2f", row$fix_host))
       if (!is.na(row$fix_path)) flags <- c(flags, sprintf("fixP=%.2f", row$fix_path))
-      tag <- if (length(flags) > 0) paste0("  [", paste(flags, collapse=", "), "]") else ""
-      cat(sprintf("    %-25s %s\n", row$condition, tag))
+      if (!is.na(row$rep)) flags <- c(flags, sprintf("rep%d", row$rep))
+      if (!is.na(row$tag)) flags <- c(flags, sprintf("tag=%s", row$tag))
+      if (!is.na(row$max_gens) && row$max_gens != 1000000)
+        flags <- c(flags, sprintf("%dK gens", row$max_gens / 1000))
+      ftag <- if (length(flags) > 0) paste0("  [", paste(flags, collapse=", "), "]") else ""
+      cat(sprintf("    %-25s %s\n", row$condition, ftag))
     }
   }
   cat("\n", strrep("─", 70), "\n")
@@ -2091,11 +2096,19 @@ scale_color_condition <- function(...)
 
 # --- Shared helper: load experiments from catalog ---
 load_all_conditions <- function(model_name, sigma = 0.1, diploid = NULL,
-                                include_pinned = FALSE, gamma_filter = 0.01) {
+                                include_pinned = FALSE, gamma_filter = 0.01,
+                                tag_filter = NA) {
   cat <- discover_experiments()
   
   # Filter to model
   sub <- cat %>% filter(fitness == model_name)
+  
+  # Tag filter: NA (default) = exclude tagged runs; NULL = all; string = match
+  if (is.na(tag_filter)) {
+    sub <- sub %>% filter(is.na(tag))
+  } else if (!is.null(tag_filter)) {
+    sub <- sub %>% filter(!is.na(tag) & tag == tag_filter)
+  }
   
   # Diploid filter
   if (!is.null(diploid)) sub <- sub %>% filter(diploid == !!diploid)
@@ -2169,10 +2182,18 @@ load_all_conditions <- function(model_name, sigma = 0.1, diploid = NULL,
 #' @param conditions Character vector of conditions to load (NULL = all 4)
 #' @return tibble with columns: gen, v, s, condition, scenario, rep, ...
 load_replicates <- function(model_name, sigma = 0.1, diploid = NULL,
-                            gamma_filter = 0.01, conditions = NULL) {
+                            gamma_filter = 0.01, conditions = NULL,
+                            tag_filter = NA) {
   cat <- discover_experiments()
   
   sub <- cat %>% filter(fitness == model_name)
+  
+  # Tag filter: NA (default) = exclude tagged; NULL = all; string = match
+  if (is.na(tag_filter)) {
+    sub <- sub %>% filter(is.na(tag))
+  } else if (!is.null(tag_filter)) {
+    sub <- sub %>% filter(!is.na(tag) & tag == tag_filter)
+  }
   
   if (!is.null(diploid)) sub <- sub %>% filter(diploid == !!diploid)
   if (!is.null(sigma))   sub <- sub %>% filter(abs(std_dev_move - sigma) < 1e-6)
@@ -3738,6 +3759,9 @@ fig_timeseries("taylor", "Time_series_taylor", diploid = TRUE, max_pts = 100,
                sigma = 0.1, width = 9, height = 10)
 
 fig_timeseries("taylor", "Time_series_taylor_not_thinned", diploid = TRUE, max_pts = Inf,
+               sigma = 0.1, width = 9, height = 10)
+
+fig_timeseries("chronic", "Time_series_chronic", diploid = TRUE, max_pts = 1000,
                sigma = 0.1, width = 9, height = 10)
 
 # Specific variants
