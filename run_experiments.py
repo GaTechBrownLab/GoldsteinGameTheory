@@ -74,6 +74,7 @@ def run_single_condition(
     fix_path_trait: float = None,
     gamma: float = None,
     rep: int = None,
+    tag: str = None,
 ) -> str:
     """Run a single experimental condition.
     
@@ -89,6 +90,9 @@ def run_single_condition(
         Replicate number. Tags the output directory with rep{N}
         and offsets the seed by (rep - 1) for reproducibility.
         rep=1 uses the base seed, rep=2 uses base+1, etc.
+    tag : str, optional
+        Arbitrary tag appended to output directory (e.g. 'test', 'v2').
+        Useful for short test runs that shouldn't overwrite production data.
     """
     
 
@@ -117,6 +121,8 @@ def run_single_condition(
         tags.append(f"fixP{fix_path_trait}")
     if rep is not None:
         tags.append(f"rep{rep}")
+    if tag is not None:
+        tags.append(tag)
     if tags:
         dir_name += "_" + "_".join(tags)
     
@@ -178,6 +184,7 @@ def run_single_condition(
         "FIX_HOST_TRAIT": fix_host_trait if fix_host_trait is not None else False,
         "FIX_PATH_TRAIT": fix_path_trait if fix_path_trait is not None else False,
         "rep": rep,
+        "tag": tag,
         "seed_base": params["seed_base"],
         "effective_seed": effective_seed,
         "timestamp": datetime.datetime.now().isoformat(),
@@ -239,6 +246,7 @@ def run_all_conditions(
     fix_path_trait: float = None,
     gamma: float = None,
     rep: int = None,
+    tag: str = None,
 ) -> dict:
     """Run all 4 conditions for a fitness model."""
     results = {}
@@ -256,6 +264,7 @@ def run_all_conditions(
             fix_path_trait=fix_path_trait,
             gamma=gamma,
             rep=rep,
+            tag=tag,
         )
         results[condition] = output_csv
     
@@ -271,6 +280,7 @@ def run_gamma_sweep(
     sigma: float = 0.1,
     diploid: bool = True,
     rep: int = None,
+    tag: str = None,
 ) -> dict:
     """Sweep mutation rate asymmetry (gamma) across conditions.
     
@@ -322,6 +332,7 @@ def run_gamma_sweep(
                 diploid=diploid,
                 gamma=gamma,
                 rep=rep,
+                tag=tag,
             )
             results[(gamma, cond_name)] = output_csv
     
@@ -371,6 +382,9 @@ Replicates:
   python run_experiments.py -f taylor --diploid --rep 2
   python run_experiments.py -f taylor --diploid --rep 3
   # or in a loop: for r in 1 2 3; do python run_experiments.py -f taylor --diploid --rep $r; done
+Quick test (won't touch production results):
+  python run_experiments.py -f chronic --diploid --tag test --gens 1000
+  python run_experiments.py -f acute -c ERhost_ERpath --diploid --tag eqfix --gens 5000
         """
     )
     
@@ -380,6 +394,8 @@ Replicates:
                         help="Single condition (default: all 4)")
     parser.add_argument("--quick", "-q", action="store_true",
                         help="Quick test (10K gens)")
+    parser.add_argument("--gens", type=int, default=None,
+                        help="Custom generation count (overrides --quick and default)")
     parser.add_argument("--output", "-o", default="results",
                         help="Output directory (default: results)")
     parser.add_argument("--seed", type=int, help="Random seed override")
@@ -402,6 +418,9 @@ Replicates:
     parser.add_argument("--rep", type=int, default=None,
                         help="Replicate number. Tags output dir with rep{N} and "
                              "offsets seed by (rep-1). Use --rep 1,2,3 style in a loop.")
+    parser.add_argument("--tag", type=str, default=None,
+                        help="Arbitrary tag appended to output dir name (e.g. 'test', 'v2'). "
+                             "Useful for short test runs that don't overwrite production data.")
    
     args = parser.parse_args()
     
@@ -420,6 +439,9 @@ Replicates:
     params = QUICK_PARAMS.copy() if args.quick else DEFAULT_PARAMS.copy()
     if args.seed:
         params["seed_base"] = args.seed
+    if args.gens is not None:
+        params["max_gens"] = args.gens
+        params["burn_in_gens"] = min(params["burn_in_gens"], args.gens // 10)
     
     # Parse step sizes
     sigmas = [None]  # default: use simulation.py default (0.1)
@@ -435,7 +457,13 @@ Replicates:
     print(f"# Goldstein Coevolution Experiment Runner")
     print(f"{'#'*60}")
     print(f"Fitness: {args.fitness}")
-    print(f"Mode: {'QUICK (10K gens)' if args.quick else 'FULL (1M gens)'}")
+    if args.gens:
+        mode_str = f"CUSTOM ({params['max_gens']:,} gens)"
+    elif args.quick:
+        mode_str = "QUICK (10K gens)"
+    else:
+        mode_str = "FULL (1M gens)"
+    print(f"Mode: {mode_str}")
     if args.diploid:
         print(f"Kimura: DIPLOID (4Ns)")
     if len(sigmas) > 1 or sigmas[0] is not None:
@@ -450,6 +478,8 @@ Replicates:
         print(f"Path pinned at v={args.fix_path}")
     if args.rep is not None:
         print(f"Replicate: {args.rep}  (seed offset: +{args.rep - 1})")
+    if args.tag is not None:
+        print(f"Tag: {args.tag}")
     
     # === Gamma sweep mode ===
     if gammas is not None:
@@ -464,6 +494,7 @@ Replicates:
                 sigma=sigma if sigma is not None else 0.1,
                 diploid=args.diploid,
                 rep=args.rep,
+                tag=args.tag,
             )
     else:
         # === Standard mode (with optional single gamma) ===
@@ -482,6 +513,7 @@ Replicates:
                     fix_path_trait=args.fix_path,
                     gamma=args.gamma,
                     rep=args.rep,
+                    tag=args.tag,
                 )
             else:
                 results = run_all_conditions(
@@ -494,6 +526,7 @@ Replicates:
                     fix_path_trait=args.fix_path,
                     gamma=args.gamma,
                     rep=args.rep,
+                    tag=args.tag,
                 )
                 print(f"\n{'='*60}")
                 print("COMPLETE - Output files:")
