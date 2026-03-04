@@ -552,13 +552,21 @@ SCENARIO_TO_CONDITION <- c(
 #' Load like the old load_sim() but using auto-discovery
 #' Works as drop-in replacement for existing figure functions
 load_sim <- function(model, scenario, min_gen = MIN_GEN_CUTOFF,
-                     sigma = NULL, diploid_filter = NULL) {
+                     sigma = NULL, diploid_filter = NULL,
+                     tag_filter = NA) {
   
   cat <- discover_experiments()
   condition <- SCENARIO_TO_CONDITION[scenario]
   if (is.na(condition)) condition <- scenario
   
   subset <- cat %>% filter(fitness == model, condition == !!condition)
+  
+  # Tag filter: NA (default) = exclude tagged; NULL = all; string = match
+  if (is.na(tag_filter)) {
+    subset <- subset %>% filter(is.na(tag))
+  } else if (!is.null(tag_filter)) {
+    subset <- subset %>% filter(!is.na(tag) & tag == tag_filter)
+  }
   
   if (nrow(subset) == 0) {
     warning(paste("No data for", model, "/", condition,
@@ -1149,13 +1157,21 @@ line_panel <- function(df, y_var, ylab = NULL,
     x_lims <- tax$lims; x_breaks <- tax$breaks; x_labels <- tax$labels
   }
   
-  # Auto-detect trait axis: use model domain for v/s, [0,1] for fitness
+  # Auto-detect trait axis: use model domain for v/s, auto-range for fitness
   is_trait <- y_var %in% c("v", "s")
   if (is_trait) {
     yax <- auto_trait_axis(model_name, df, y_var)
     y_lims <- yax$lims; y_breaks <- yax$breaks
   } else {
-    y_lims <- c(0, 1); y_breaks <- c(0, 0.5, 1)
+    # Auto-scale fitness panels from data (chronic W_H = 1/m can exceed 1)
+    rng <- range(df[[y_var]], na.rm = TRUE)
+    if (rng[2] <= 1.05) {
+      y_lims <- c(0, 1); y_breaks <- c(0, 0.5, 1)
+    } else {
+      pad <- (rng[2] - rng[1]) * 0.05
+      y_lims <- c(max(0, rng[1] - pad), rng[2] + pad)
+      y_breaks <- pretty(y_lims, n = 4)
+    }
   }
   
   geom_fn <- if (use_step) geom_step else geom_line
@@ -1242,11 +1258,20 @@ fig_timeseries <- function(model_name = "acute", filename = NULL,
                            max_pts = 2000, smooth = NULL,
                            step = FALSE,
                            width = NULL, height = NULL,
-                           x_lims = NULL, x_breaks = NULL, x_labels = NULL) {
+                           x_lims = NULL, x_breaks = NULL, x_labels = NULL,
+                           tag_filter = NA,
+                           conditions = NULL) {
   
   scenarios <- c("ET-ET", "ERpath-EThost", "ERhost-ETpath", "ER-ER")
   col_titles <- c("ET / ET", "ET host / ER path",
                   "ER host / ET path", "ER / ER")
+  
+  # Filter to requested conditions
+  if (!is.null(conditions)) {
+    keep <- scenarios %in% conditions
+    scenarios  <- scenarios[keep]
+    col_titles <- col_titles[keep]
+  }
   
   tag <- model_name
   if (!is.null(diploid) && diploid) tag <- paste0(tag, " (diploid)")
@@ -1255,7 +1280,9 @@ fig_timeseries <- function(model_name = "acute", filename = NULL,
   
   dfs <- setNames(
     lapply(scenarios, function(sc) {
-      d <- load_sim(model_name, sc, sigma = sigma, diploid_filter = diploid)
+      d <- suppressWarnings(load_sim(model_name, sc, sigma = sigma,
+                                     diploid_filter = diploid,
+                                     tag_filter = tag_filter))
       if (is.null(d) || nrow(d) == 0) return(NULL)
       td <- thin_for_plot(d, max_pts = max_pts)
       if (!is.null(smooth) && smooth > 1) {
@@ -3761,8 +3788,8 @@ fig_timeseries("taylor", "Time_series_taylor", diploid = TRUE, max_pts = 100,
 fig_timeseries("taylor", "Time_series_taylor_not_thinned", diploid = TRUE, max_pts = Inf,
                sigma = 0.1, width = 9, height = 10)
 
-fig_timeseries("chronic", "Time_series_chronic", diploid = TRUE, max_pts = 1000,
-               sigma = 0.1, width = 9, height = 10)
+fig_timeseries("chronic", "Time_series_chronic", diploid = TRUE, max_pts = 100,
+               sigma = 0.1, width = 9, height = 10, tag_filter = "v3")
 
 # Specific variants
 # Works even if only some conditions exist for that variant

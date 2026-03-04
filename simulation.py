@@ -1,7 +1,7 @@
 # =========================
 # simulation.py
 # Unified host-pathogen coevolution simulation
-# Supports fitness models: acute, minimal, taylor
+# Supports fitness models: acute, minimal, taylor, chronic
 # Compatible with run_experiments.py
 # Author: Canan Karakoc, Karan Gosrani
 # Origin: Jan Goldstein's Java code 2020
@@ -355,7 +355,10 @@ def find_all_equilibria(bS: float, mS: float, bV: float, mV: float) -> List[Equi
                                    host_max=False, path_max=False, nash=True))
         return eqs
 
-    # Bounded mode: check interior if in bounds
+    # Bounded mode: always use interior if in bounds.
+    # The simultaneous solution s=clamp(bS+mS*v), v=clamp(bV+mV*s) is exact
+    # when (v0,s0) is in [0,1] — clamping has no effect on interior points.
+    # Stability label tracks sensitivity but doesn't affect validity.
     if interior is not None:
         v0, s0 = interior
         if TRAIT_MIN < v0 < TRAIT_MAX and TRAIT_MIN < s0 < TRAIT_MAX:
@@ -363,7 +366,6 @@ def find_all_equilibria(bS: float, mS: float, bV: float, mV: float) -> List[Equi
             eqs.append(Equilibrium(v=v0, s=s0, interior=True, stable=stable,
                                    host_max=False, path_max=False, nash=True))
 
-    # Boundary candidates
     candidates: List[Tuple[float, float]] = []
     lo, hi = TRAIT_MIN, TRAIT_MAX
     candidates.extend([(lo,lo),(lo,hi),(hi,lo),(hi,hi)])
@@ -392,57 +394,70 @@ def find_all_equilibria(bS: float, mS: float, bV: float, mV: float) -> List[Equi
             eqs.append(Equilibrium(v=v, s=s, interior=False, stable=True,
                                    host_max=host_max, path_max=path_max, nash=True))
 
-    # Fallback: iterative fixed-point solver for clamped map.
-    # Brouwer's theorem guarantees a fixed point exists for
-    #   v -> clamp(bV + mV * clamp(bS + mS * v))
-    # Use this when no candidates passed the consistency check.
+    # Fallback: when no equilibria found (unstable interior + no boundary
+    # candidates pass), iterate clamped maps to find 2-cycle states.
+    # These are the biologically relevant outcomes — boundary-clamped states
+    # where the system actually rests (stasis).
     if len(eqs) == 0:
-        eq_iter = _solve_clamped_iterative(bS, mS, bV, mV)
-        if eq_iter is not None:
-            eqs.append(eq_iter)
+        eqs.extend(_solve_clamped_cycle(bS, mS, bV, mV))
 
     return eqs
 
 
-def _solve_clamped_iterative(bS: float, mS: float, bV: float, mV: float,
-                              max_iter: int = 200, tol: float = 1e-9) -> Optional[Equilibrium]:
-    """Iterate clamped response maps to find a fixed point.
-    
-    Tries multiple starting points to handle possible multiple fixed points.
-    Returns the first convergent solution found.
+def _solve_clamped_cycle(bS: float, mS: float, bV: float, mV: float,
+                          max_iter: int = 200, tol: float = 1e-9) -> List[Equilibrium]:
+    """Iterate clamped response maps to find fixed point or 2-cycle states.
+
+    Tries multiple starting points (Brouwer guarantees a fixed point exists).
+    When |mS*mV| > 1, the clamped map may produce a 2-cycle instead of
+    converging.  Returns BOTH cycle states (labeled nash=False, since they
+    only satisfy one player's best-response) so the selecting player can
+    choose the one maximizing their fitness.
     """
+    import warnings
     lo, hi = TRAIT_MIN, TRAIT_MAX
     starts = [0.5 * (lo + hi), lo + 0.01, hi - 0.01, 0.25, 0.75]
-    
+
     for v0 in starts:
         v = v0
         for _ in range(max_iter):
             s_new = clamp01(bS + mS * v)
             v_new = clamp01(bV + mV * s_new)
             if abs(v_new - v) < tol:
-                # Verify consistency
+                # Converged to a true fixed point
                 s_final = clamp01(bS + mS * v_new)
-                if abs(s_final - s_new) < tol * 10:
-                    host_max = (s_new <= TRAIT_MIN + 1e-9 or s_new >= TRAIT_MAX - 1e-9)
-                    path_max = (v_new <= TRAIT_MIN + 1e-9 or v_new >= TRAIT_MAX - 1e-9)
-                    return Equilibrium(v=v_new, s=s_new, interior=False, 
-                                       stable=False, host_max=host_max, 
-                                       path_max=path_max, nash=True)
+                host_max = (s_final <= TRAIT_MIN + 1e-9 or s_final >= TRAIT_MAX - 1e-9)
+                path_max = (v_new <= TRAIT_MIN + 1e-9 or v_new >= TRAIT_MAX - 1e-9)
+                return [Equilibrium(v=v_new, s=s_final, interior=False,
+                                    stable=True, host_max=host_max,
+                                    path_max=path_max, nash=True)]
             v = v_new
-    
-    # If iteration doesn't converge (2-cycle), pick best from last two points
-    # This handles oscillatory cases
-    v_a = v
+
+    # No starting point converged -> extract 2-cycle states.
+    # These are NOT Nash equilibria (each only satisfies one player's
+    # best-response), so nash=False.
+    warnings.warn(f"Clamped iteration 2-cycle fallback: bS={bS:.4f}, mS={mS:.4f}, "
+                  f"bV={bV:.4f}, mV={mV:.4f}", stacklevel=3)
+    v_a = v  # last iterate from final starting point
     s_a = clamp01(bS + mS * v_a)
     v_b = clamp01(bV + mV * s_a)
     s_b = clamp01(bS + mS * v_b)
-    # Return midpoint of the 2-cycle
-    v_mid = 0.5 * (v_a + v_b)
-    s_mid = 0.5 * (s_a + s_b)
-    host_max = (s_mid <= TRAIT_MIN + 1e-9 or s_mid >= TRAIT_MAX - 1e-9)
-    path_max = (v_mid <= TRAIT_MIN + 1e-9 or v_mid >= TRAIT_MAX - 1e-9)
-    return Equilibrium(v=v_mid, s=s_mid, interior=False, stable=False,
-                       host_max=host_max, path_max=path_max, nash=False)
+
+    results = []
+    for (vc, sc) in [(v_a, s_a), (v_b, s_b)]:
+        host_max = (sc <= TRAIT_MIN + 1e-9 or sc >= TRAIT_MAX - 1e-9)
+        path_max = (vc <= TRAIT_MIN + 1e-9 or vc >= TRAIT_MAX - 1e-9)
+        results.append(Equilibrium(v=vc, s=sc, interior=False, stable=False,
+                                   host_max=host_max, path_max=path_max, nash=False))
+
+    # Deduplicate if both states are the same (degenerate 2-cycle = fixed point)
+    if abs(results[0].v - results[1].v) < 1e-6 and abs(results[0].s - results[1].s) < 1e-6:
+        results[0] = Equilibrium(v=results[0].v, s=results[0].s, interior=False,
+                                 stable=True, host_max=results[0].host_max,
+                                 path_max=results[0].path_max, nash=True)
+        return [results[0]]
+
+    return results
 
 # ============================================================
 # Simulation (Gillespie architecture)
@@ -510,7 +525,7 @@ class Simulation:
         eqs = find_all_equilibria(self.bS, self.mS, self.bV, self.mV)
         best = _best_equilibrium_for_player(eqs, selector)
         if best is None:
-            # Should be very rare now with iterative fallback
+            # Should be very rare now with 2-cycle fallback
             import warnings
             warnings.warn(f"No equilibrium found: bS={self.bS:.4f}, mS={self.mS:.4f}, "
                           f"bV={self.bV:.4f}, mV={self.mV:.4f}. Using intercepts.",
@@ -829,6 +844,7 @@ def run_with_runtime_modes(sim: Simulation, out_csv: str):
                     "", "", "", "", "", "",
                     "", "", ""
                 ])
+                f.flush()
 
             result = sim.step_generation()
             dwell_out = max(float(result.get("dwell", 1.0)), DWELL_MIN)
