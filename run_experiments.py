@@ -421,6 +421,8 @@ Quick test (won't touch production results):
     parser.add_argument("--tag", type=str, default=None,
                         help="Arbitrary tag appended to output dir name (e.g. 'test', 'v2'). "
                              "Useful for short test runs that don't overwrite production data.")
+    parser.add_argument("--bins", type=int, default=None,
+                        help="Number of mutation step bins (default 51). Use 11 for ~20x faster test runs.")
    
     args = parser.parse_args()
     
@@ -442,6 +444,15 @@ Quick test (won't touch production results):
     if args.gens is not None:
         params["max_gens"] = args.gens
         params["burn_in_gens"] = min(params["burn_in_gens"], args.gens // 10)
+    
+    sim = importlib.import_module("simulation")
+    if args.bins is not None:
+        sim.num_step_bins = args.bins
+        print(f"Mutation bins: {args.bins} ({args.bins**2} combos/player)")
+    
+    # Scale progress reporting to run length
+    if args.gens is not None and args.gens <= 100000:
+        sim.PROGRESS_EVERY = max(1000, args.gens // 10)
     
     # Parse step sizes
     sigmas = [None]  # default: use simulation.py default (0.1)
