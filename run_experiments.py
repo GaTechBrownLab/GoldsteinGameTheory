@@ -75,9 +75,12 @@ def run_single_condition(
     gamma: float = None,
     rep: int = None,
     tag: str = None,
+    pop_size: int = None,
+    nS: float = None,
+    nV: float = None,
 ) -> str:
     """Run a single experimental condition.
-    
+
     Parameters
     ----------
     gamma : float, optional
@@ -93,6 +96,12 @@ def run_single_condition(
     tag : str, optional
         Arbitrary tag appended to output directory (e.g. 'test', 'v2').
         Useful for short test runs that shouldn't overwrite production data.
+    pop_size : int, optional
+        Override HOST_POP_N. PATH_POP_N scales proportionally (100x host).
+    nS : float, optional
+        Override host trait cost (nS_HLP).
+    nV : float, optional
+        Override pathogen virulence cost (nV_HLP).
     """
     
 
@@ -119,6 +128,12 @@ def run_single_condition(
         tags.append(f"fixH{fix_host_trait}")
     if fix_path_trait is not None:
         tags.append(f"fixP{fix_path_trait}")
+    if pop_size is not None:
+        tags.append(f"N{pop_size}")
+    if nS is not None:
+        tags.append(f"nS{nS}")
+    if nV is not None:
+        tags.append(f"nV{nV}")
     if rep is not None:
         tags.append(f"rep{rep}")
     if tag is not None:
@@ -153,6 +168,13 @@ def run_single_condition(
         sim.std_dev_move = sigma
     if gamma is not None:
         sim.prob_host_mutate = gamma
+    if pop_size is not None:
+        sim.HOST_POP_N = pop_size
+        sim.PATH_POP_N = pop_size * 100
+    if nS is not None:
+        sim.nS_HLP = nS
+    if nV is not None:
+        sim.nV_HLP = nV
     sim.max_gens = params["max_gens"]
     sim.burn_in_gens = params["burn_in_gens"]
     
@@ -180,6 +202,8 @@ def run_single_condition(
         "DIPLOID_KIMURA": diploid,
         "HOST_POP_N": sim.HOST_POP_N,
         "PATH_POP_N": sim.PATH_POP_N,
+        "nS_HLP": sim.nS_HLP,
+        "nV_HLP": sim.nV_HLP,
         "prob_host_mutate": sim.prob_host_mutate,
         "FIX_HOST_TRAIT": fix_host_trait if fix_host_trait is not None else False,
         "FIX_PATH_TRAIT": fix_path_trait if fix_path_trait is not None else False,
@@ -214,6 +238,12 @@ def run_single_condition(
         print(f"  Host trait PINNED at s={fix_host_trait}")
     if fix_path_trait is not None:
         print(f"  Path trait PINNED at v={fix_path_trait}")
+    if pop_size is not None:
+        print(f"  Population: HOST_N={sim.HOST_POP_N}, PATH_N={sim.PATH_POP_N}")
+    if nS is not None:
+        print(f"  Host trait cost (nS): {sim.nS_HLP}")
+    if nV is not None:
+        print(f"  Pathogen virulence cost (nV): {sim.nV_HLP}")
     if rep is not None:
         print(f"  Replicate: {rep}  (seed: {effective_seed})")
     print(f"  Output: {output_csv}")
@@ -247,10 +277,13 @@ def run_all_conditions(
     gamma: float = None,
     rep: int = None,
     tag: str = None,
+    pop_size: int = None,
+    nS: float = None,
+    nV: float = None,
 ) -> dict:
     """Run all 4 conditions for a fitness model."""
     results = {}
-    
+
     for condition, (host_reactive, path_reactive) in CONDITIONS.items():
         output_csv = run_single_condition(
             fitness_model=fitness_model,
@@ -265,9 +298,12 @@ def run_all_conditions(
             gamma=gamma,
             rep=rep,
             tag=tag,
+            pop_size=pop_size,
+            nS=nS,
+            nV=nV,
         )
         results[condition] = output_csv
-    
+
     return results
 
 
@@ -342,6 +378,80 @@ def run_gamma_sweep(
     for (g, c), path in results.items():
         print(f"  γ={g:5.3f}  {c:20s}  →  {path}")
     
+    return results
+
+
+def run_nash_dwell_sweep(
+    params: dict,
+    output_base: str = "results",
+    diploid: bool = True,
+    gamma: float = 0.1,
+) -> dict:
+    """Run 4 parameter sweeps to probe weak Nash dwell time.
+
+    Each sweep varies one parameter while holding others at default,
+    across 3 fitness models (acute, chronic, minimal), ER-ER only.
+    Total: 48 runs (4 values × 3 models × 4 sweeps).
+
+    Parameters
+    ----------
+    gamma : float
+        Mutation rate asymmetry for all Nash sweep runs.
+        Default 0.1 (9:1 pathogen advantage — biologically motivated,
+        but gives the host enough mutations to respond).
+    """
+    models = ["acute", "chronic", "minimal"]
+    condition = "ERhost_ERpath"
+    host_reactive, path_reactive = CONDITIONS[condition]
+
+    sweeps = {
+        "sigma": {"param": "sigma", "values": [0.01, 0.05, 0.1, 0.2]},
+        "N":     {"param": "pop_size", "values": [1000, 5000, 10000, 50000]},
+        "nS":    {"param": "nS", "values": [0.01, 0.05, 0.1, 0.5]},
+        "nV":    {"param": "nV", "values": [0.1, 0.5, 1.0, 5.0]},
+    }
+
+    total_runs = sum(len(s["values"]) for s in sweeps.values()) * len(models)
+    done = 0
+    results = {}
+
+    print(f"\n{'#'*60}")
+    print(f"# Nash Dwell Parameter Sweep")
+    print(f"# Models: {models}")
+    print(f"# Condition: {condition}")
+    print(f"# γ (baseline): {gamma}")
+    print(f"# Total runs: {total_runs}")
+    print(f"{'#'*60}")
+
+    for sweep_name, sweep_cfg in sweeps.items():
+        param_key = sweep_cfg["param"]
+        for value in sweep_cfg["values"]:
+            for model in models:
+                done += 1
+                tag = f"nash_{sweep_name}{value}"
+                print(f"\n  [{done}/{total_runs}] {model} {sweep_name}={value}")
+
+                kwargs = {
+                    "fitness_model": model,
+                    "host_reactive": host_reactive,
+                    "path_reactive": path_reactive,
+                    "params": params,
+                    "output_base": output_base,
+                    "diploid": diploid,
+                    "gamma": gamma,
+                    "tag": tag,
+                }
+                kwargs[param_key] = value
+
+                output_csv = run_single_condition(**kwargs)
+                results[(sweep_name, value, model)] = output_csv
+
+    print(f"\n{'='*60}")
+    print(f"NASH DWELL SWEEP COMPLETE — {done} runs")
+    print(f"{'='*60}")
+    for (sweep, val, model), path in results.items():
+        print(f"  {sweep}={val}  {model:10s}  →  {path}")
+
     return results
 
 
@@ -423,7 +533,15 @@ Quick test (won't touch production results):
                              "Useful for short test runs that don't overwrite production data.")
     parser.add_argument("--bins", type=int, default=None,
                         help="Number of mutation step bins (default 51). Use 11 for ~20x faster test runs.")
-   
+    parser.add_argument("--pop-size", type=int, default=None,
+                        help="Override HOST_POP_N (PATH_POP_N = 100× host)")
+    parser.add_argument("--nS", type=float, default=None,
+                        help="Override host trait cost (nS_HLP)")
+    parser.add_argument("--nV", type=float, default=None,
+                        help="Override pathogen virulence cost (nV_HLP)")
+    parser.add_argument("--nash-sweep", action="store_true",
+                        help="Run all 4 parameter sweeps for weak Nash dwell analysis (48 runs)")
+
     args = parser.parse_args()
     
     if args.list:
@@ -492,6 +610,18 @@ Quick test (won't touch production results):
     if args.tag is not None:
         print(f"Tag: {args.tag}")
     
+    # === Nash dwell sweep mode ===
+    if args.nash_sweep:
+        nash_gamma = args.gamma if args.gamma is not None else 0.1
+        run_nash_dwell_sweep(
+            params=params,
+            output_base=args.output,
+            diploid=args.diploid,
+            gamma=nash_gamma,
+        )
+        print("\nDone!")
+        return
+
     # === Gamma sweep mode ===
     if gammas is not None:
         conditions_to_run = [args.condition] if args.condition else None
@@ -525,6 +655,9 @@ Quick test (won't touch production results):
                     gamma=args.gamma,
                     rep=args.rep,
                     tag=args.tag,
+                    pop_size=args.pop_size,
+                    nS=args.nS,
+                    nV=args.nV,
                 )
             else:
                 results = run_all_conditions(
@@ -538,6 +671,9 @@ Quick test (won't touch production results):
                     gamma=args.gamma,
                     rep=args.rep,
                     tag=args.tag,
+                    pop_size=args.pop_size,
+                    nS=args.nS,
+                    nV=args.nV,
                 )
                 print(f"\n{'='*60}")
                 print("COMPLETE - Output files:")
