@@ -1145,18 +1145,24 @@ auto_trait_axis <- function(model_name = NULL, df = NULL, y_var = NULL) {
 # model_name: if provided, uses TRAIT_DOMAIN for y-limits on trait variables
 # x_lims/x_breaks/x_labels: if NULL, auto-detected from data
 # use_step: if TRUE, uses geom_step instead of geom_line (better for SSWM data)
+# Replicate color palette (colorblind-friendly, up to 9 replicates)
+REP_COLORS <- c("1" = "#1B9E77", "2" = "#D95F02", "3" = "#7570B3",
+                "4" = "#E7298A", "5" = "#66A61E", "6" = "#E6AB02",
+                "7" = "#A6761D", "8" = "#666666", "9" = "#1F78B4",
+                "0" = "#2D3748")
+
 line_panel <- function(df, y_var, ylab = NULL,
                        show_xlab = FALSE, show_ylab = TRUE,
                        model_name = NULL,
                        x_lims = NULL, x_breaks = NULL, x_labels = NULL,
-                       use_step = FALSE) {
-  
+                       use_step = FALSE, has_reps = FALSE) {
+
   # Auto-detect time axis from data if not specified
   if (is.null(x_lims)) {
     tax <- auto_time_axis(df)
     x_lims <- tax$lims; x_breaks <- tax$breaks; x_labels <- tax$labels
   }
-  
+
   # Auto-detect trait axis: use model domain for v/s, auto-range for fitness
   is_trait <- y_var %in% c("v", "s")
   if (is_trait) {
@@ -1181,20 +1187,32 @@ line_panel <- function(df, y_var, ylab = NULL,
       y_breaks <- pretty(y_lims, n = 4)
     }
   }
-  
+
   geom_fn <- if (use_step) geom_step else geom_line
-  
-  p <- ggplot(df, aes(x = gen, y = .data[[y_var]])) +
-    geom_fn(linewidth = 0.5, alpha = 0.85) +
+
+  if (has_reps && "rep" %in% names(df)) {
+    n_reps <- length(unique(df$rep))
+    lw <- if (n_reps <= 3) 0.4 else 0.3
+    al <- if (n_reps <= 3) 0.7 else 0.5
+    p <- ggplot(df, aes(x = gen, y = .data[[y_var]],
+                        color = factor(rep), group = rep)) +
+      geom_fn(linewidth = lw, alpha = al) +
+      scale_color_manual(values = REP_COLORS, guide = "none")
+  } else {
+    p <- ggplot(df, aes(x = gen, y = .data[[y_var]])) +
+      geom_fn(linewidth = 0.5, alpha = 0.85)
+  }
+
+  p <- p +
     scale_x_continuous(limits = x_lims, breaks = x_breaks, labels = x_labels) +
     scale_y_continuous(limits = y_lims, breaks = y_breaks) +
     coord_cartesian(xlim = x_lims) +
     mytheme
-  
+
   if (show_ylab && !is.null(ylab)) p <- p + labs(y = ylab)
   else p <- p + labs(y = NULL) +
     theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
-  
+
   if (show_xlab) p <- p + labs(x = "Evolutionary time")
   else p <- p + labs(x = NULL) +
     theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
@@ -1205,50 +1223,76 @@ line_panel <- function(df, y_var, ylab = NULL,
 omega_panel <- function(df, who = c("Path", "Host"),
                         cap = 1e6, bins = 2000,
                         show_xlab = FALSE, show_ylab = TRUE, ylab = NULL,
-                        x_lims = NULL, x_breaks = NULL, x_labels = NULL) {
+                        x_lims = NULL, x_breaks = NULL, x_labels = NULL,
+                        has_reps = FALSE) {
   who <- match.arg(who)
   omega_col <- if (who == "Path") "omegaPath" else "omegaHost"
-  
+
   # Auto-detect time axis from data if not specified
   if (is.null(x_lims)) {
     tax <- auto_time_axis(df)
     x_lims <- tax$lims; x_breaks <- tax$breaks; x_labels <- tax$labels
   }
-  
+
   rng <- range(x_lims)
   edges <- seq(rng[1], rng[2], length.out = bins + 1)
-  
-  dat <- df %>%
-    filter(event == "post", gen >= rng[1], gen <= rng[2]) %>%
-    transmute(
-      x = gen,
-      y = pmin(cap, pmax(1e-12, as.numeric(.data[[omega_col]]))),
-      lbin = cut(gen, breaks = edges, include.lowest = TRUE)
-    ) %>%
-    group_by(lbin) %>%
-    slice_max(order_by = y, n = 1, with_ties = FALSE) %>%
-    ungroup()
-  
-  p <- ggplot(dat) +
-    geom_segment(aes(x = x, xend = x, y = 1e-2, yend = pmax(1e-2, y)),
-                 linewidth = 0.35, alpha = 0.9) +
+
+  # If replicates, bin per replicate
+  if (has_reps && "rep" %in% names(df)) {
+    dat <- df %>%
+      filter(gen >= rng[1], gen <= rng[2]) %>%
+      transmute(
+        x = gen,
+        y = pmin(cap, pmax(1e-12, as.numeric(.data[[omega_col]]))),
+        rep = factor(rep),
+        lbin = cut(gen, breaks = edges, include.lowest = TRUE)
+      ) %>%
+      group_by(rep, lbin) %>%
+      slice_max(order_by = y, n = 1, with_ties = FALSE) %>%
+      ungroup()
+
+    n_reps <- length(unique(dat$rep))
+    al <- if (n_reps <= 3) 0.6 else 0.4
+    p <- ggplot(dat) +
+      geom_segment(aes(x = x, xend = x, y = 1e-2, yend = pmax(1e-2, y),
+                       color = rep),
+                   linewidth = 0.3, alpha = al) +
+      scale_color_manual(values = REP_COLORS, guide = "none")
+  } else {
+    dat <- df %>%
+      filter(gen >= rng[1], gen <= rng[2]) %>%
+      transmute(
+        x = gen,
+        y = pmin(cap, pmax(1e-12, as.numeric(.data[[omega_col]]))),
+        lbin = cut(gen, breaks = edges, include.lowest = TRUE)
+      ) %>%
+      group_by(lbin) %>%
+      slice_max(order_by = y, n = 1, with_ties = FALSE) %>%
+      ungroup()
+
+    p <- ggplot(dat) +
+      geom_segment(aes(x = x, xend = x, y = 1e-2, yend = pmax(1e-2, y)),
+                   linewidth = 0.35, alpha = 0.9)
+  }
+
+  p <- p +
     scale_x_continuous(limits = x_lims, breaks = x_breaks, labels = x_labels) +
     scale_y_log10(limits = W_LIMS_LOG, breaks = W_BREAKS_LOG,
                   labels = W_LABS_LOG, minor_breaks = NULL) +
     coord_cartesian(xlim = x_lims, ylim = W_LIMS_LOG) +
     mytheme
-  
+
   if (show_ylab && !is.null(ylab)) p <- p + labs(y = ylab)
   else p <- p + labs(y = NULL) +
     theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
-  
+
   if (show_xlab) p <- p + labs(x = "Evolutionary time")
   else p <- p + labs(x = NULL) +
     theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
   p
 }
 
-#' Build the full 6x4 time series figure for one fitness model
+#' Build the full 6xN time series figure for one fitness model
 #' Columns: ET-ET | ERpath-EThost | ERhost-ETpath | ER-ER
 #' Rows: v, c, W_P, W_H, omega_P, omega_H
 #' @param sigma  Filter by step size (e.g. 0.01). NULL = default/first match.
@@ -1261,89 +1305,127 @@ omega_panel <- function(df, who = c("Path", "Host"),
 #' @param x_lims   Override time axis limits, e.g. c(0, 1e6). NULL = auto-detect.
 #' @param x_breaks Override time axis breaks, e.g. c(0, 5e5, 1e6). NULL = auto-detect.
 #' @param x_labels Override time axis labels, e.g. c("0", "500K", "1M"). NULL = auto-detect.
+#' @param tag_prefix  When set (e.g. "final_r"), loads all replicates matching
+#'   this tag prefix and overlays them as colored semi-transparent lines.
+#'   Overrides tag_filter.
 fig_timeseries <- function(model_name = "acute", filename = NULL,
                            sigma = NULL, diploid = NULL,
                            max_pts = 2000, smooth = NULL,
                            step = FALSE,
                            width = NULL, height = NULL,
                            x_lims = NULL, x_breaks = NULL, x_labels = NULL,
-                           tag_filter = NA,
+                           tag_filter = NA, tag_prefix = NULL,
                            conditions = NULL) {
-  
-  scenarios <- c("ET-ET", "ERpath-EThost", "ERhost-ETpath", "ER-ER")
-  col_titles <- c("ET / ET", "ET host / ER path",
-                  "ER host / ET path", "ER / ER")
-  
+
+  cond_names  <- c("EThost_ETpath", "EThost_ERpath", "ERhost_ETpath", "ERhost_ERpath")
+  col_titles  <- c("ET / ET", "ET host / ER path",
+                    "ER host / ET path", "ER / ER")
+  # Backward-compat: old scenario names used by load_sim
+  scenario_map <- c("EThost_ETpath" = "ET-ET", "EThost_ERpath" = "ERpath-EThost",
+                     "ERhost_ETpath" = "ERhost-ETpath", "ERhost_ERpath" = "ER-ER")
+
   # Filter to requested conditions
   if (!is.null(conditions)) {
-    keep <- scenarios %in% conditions
-    scenarios  <- scenarios[keep]
+    keep <- cond_names %in% conditions | scenario_map %in% conditions
+    cond_names <- cond_names[keep]
     col_titles <- col_titles[keep]
   }
-  
+
+  has_reps <- !is.null(tag_prefix)
+
   tag <- model_name
   if (!is.null(diploid) && diploid) tag <- paste0(tag, " (diploid)")
-  if (!is.null(sigma)) tag <- paste0(tag, " σ=", sigma)
-  cat("\n  Loading time series for:", tag, "\n")
-  
-  dfs <- setNames(
-    lapply(scenarios, function(sc) {
-      d <- suppressWarnings(load_sim(model_name, sc, sigma = sigma,
-                                     diploid_filter = diploid,
-                                     tag_filter = tag_filter))
-      if (is.null(d) || nrow(d) == 0) return(NULL)
-      td <- thin_for_plot(d, max_pts = max_pts)
-      if (!is.null(smooth) && smooth > 1) {
-        k <- min(smooth, nrow(td))
-        for (col in c("v", "s", "pathFit", "hostFit")) {
-          if (col %in% names(td))
-            td[[col]] <- rollmean(td[[col]], k = k, fill = NA, align = "center")
+  if (!is.null(sigma)) tag <- paste0(tag, " \u03c3=", sigma)
+  cat("\n  Loading time series for:", tag,
+      if (has_reps) paste0(" [replicates: ", tag_prefix, "*]") else "", "\n")
+
+  if (has_reps) {
+    # --- Replicate mode: load all reps via load_replicates ---
+    all_rep_data <- load_replicates(
+      model_name, sigma = sigma, diploid = diploid,
+      conditions = cond_names, tag_prefix = tag_prefix
+    )
+    if (nrow(all_rep_data) == 0) {
+      warning("No replicate data loaded"); return(NULL)
+    }
+
+    dfs <- setNames(
+      lapply(cond_names, function(cn) {
+        d <- all_rep_data %>% filter(condition == cn)
+        if (nrow(d) == 0) return(NULL)
+        # Thin per replicate to keep overlay readable
+        d %>%
+          group_by(rep) %>%
+          group_modify(~thin_for_plot(.x, max_pts = max_pts)) %>%
+          ungroup()
+      }),
+      cond_names
+    )
+  } else {
+    # --- Single-run mode: load via load_sim (backward compatible) ---
+    dfs <- setNames(
+      lapply(cond_names, function(cn) {
+        sc <- scenario_map[cn]
+        d <- suppressWarnings(load_sim(model_name, sc, sigma = sigma,
+                                       diploid_filter = diploid,
+                                       tag_filter = tag_filter))
+        if (is.null(d) || nrow(d) == 0) return(NULL)
+        td <- thin_for_plot(d, max_pts = max_pts)
+        if (!is.null(smooth) && smooth > 1) {
+          k <- min(smooth, nrow(td))
+          for (col in c("v", "s", "pathFit", "hostFit")) {
+            if (col %in% names(td))
+              td[[col]] <- rollmean(td[[col]], k = k, fill = NA, align = "center")
+          }
+          td <- td %>% filter(!is.na(v))
         }
-        td <- td %>% filter(!is.na(v))
-      }
-      td
-    }),
-    scenarios
-  )
-  
-  # Which scenarios actually loaded?
+        td
+      }),
+      cond_names
+    )
+  }
+
+  # Which conditions actually loaded?
   available <- !vapply(dfs, is.null, logical(1))
   if (sum(available) == 0) {
     warning("No data loaded for any condition")
     return(NULL)
   }
-  
-  # Use only available scenarios
-  active_scenarios <- scenarios[available]
-  active_titles    <- col_titles[available]
-  active_dfs       <- dfs[available]
-  n_cols           <- length(active_scenarios)
-  
-  if (sum(available) < 4) {
-    cat("  Note: only", sum(available), "of 4 conditions available:",
-        paste(active_scenarios, collapse = ", "), "\n")
+
+  active_conds  <- cond_names[available]
+  active_titles <- col_titles[available]
+  active_dfs    <- dfs[available]
+  n_cols        <- length(active_conds)
+
+  if (sum(available) < length(cond_names)) {
+    cat("  Note: only", sum(available), "of", length(cond_names), "conditions available:",
+        paste(active_titles, collapse = ", "), "\n")
   }
-  
+  if (has_reps) {
+    n_reps <- length(unique(all_rep_data$rep))
+    cat("  Overlaying", n_reps, "replicates per condition\n")
+  }
+
   # Auto-detect shared time axis from all data, or use overrides
   all_gens <- unlist(lapply(active_dfs, function(d) d$gen))
   tax <- auto_time_axis(data.frame(gen = all_gens))
   if (!is.null(x_lims))   tax$lims   <- x_lims
   if (!is.null(x_breaks)) tax$breaks <- x_breaks
   if (!is.null(x_labels)) tax$labels <- x_labels
-  
+
   rows <- list(
     list(var = "v",       ylab = expression(italic(v))),
     list(var = "s",       ylab = expression(italic(c))),
     list(var = "pathFit", ylab = expression(W[P])),
     list(var = "hostFit", ylab = expression(W[H]))
   )
-  
+
   panels <- list()
-  
+
   # Trait/fitness rows
   for (ri in seq_along(rows)) {
     row <- rows[[ri]]
-    for (ci in seq_along(active_scenarios)) {
+    for (ci in seq_along(active_conds)) {
       p <- line_panel(
         active_dfs[[ci]], row$var,
         ylab = row$ylab,
@@ -1351,7 +1433,8 @@ fig_timeseries <- function(model_name = "acute", filename = NULL,
         show_xlab = FALSE,
         model_name = model_name,
         x_lims = tax$lims, x_breaks = tax$breaks, x_labels = tax$labels,
-        use_step = step
+        use_step = step,
+        has_reps = has_reps
       )
       # Column title on first row
       if (ri == 1) {
@@ -1361,22 +1444,23 @@ fig_timeseries <- function(model_name = "acute", filename = NULL,
       panels[[length(panels) + 1]] <- p
     }
   }
-  
+
   # Omega rows
   for (who in c("Path", "Host")) {
     ylab <- if (who == "Path") expression(omega[P]) else expression(omega[H])
     is_last <- (who == "Host")
-    for (ci in seq_along(active_scenarios)) {
+    for (ci in seq_along(active_conds)) {
       panels[[length(panels) + 1]] <- omega_panel(
         active_dfs[[ci]], who,
         ylab = ylab,
         show_ylab = (ci == 1),
         show_xlab = is_last,
-        x_lims = tax$lims, x_breaks = tax$breaks, x_labels = tax$labels
+        x_lims = tax$lims, x_breaks = tax$breaks, x_labels = tax$labels,
+        has_reps = has_reps
       )
     }
   }
-  
+
   total <- wrap_plots(panels, ncol = n_cols, byrow = TRUE) +
     plot_annotation(
       title = tag,
@@ -1384,7 +1468,7 @@ fig_timeseries <- function(model_name = "acute", filename = NULL,
     ) &
     theme(plot.tag.position = "topleft",
           plot.tag = element_text(face = "bold", size = 12))
-  
+
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 2.5 * n_cols + 1
     h <- if (!is.null(height)) height else 9
@@ -1462,11 +1546,20 @@ fig_hex_combined <- function(all_data = NULL, models = c("acute", "minimal"),
                              filename = "Figure4_hex",
                              nbins = 100,
                              sigma = NULL, diploid = NULL,
-                             width = NULL, height = NULL) {
-  
+                             width = NULL, height = NULL,
+                             tag_filter = NA, tag_prefix = NULL) {
+
   # Load data if not provided
   if (is.null(all_data)) {
-    all_data <- load_all_sims(models, sigma = sigma, diploid_filter = diploid)
+    if (!is.null(tag_prefix)) {
+      # Replicate-aware: pool all replicates across models
+      all_data <- bind_rows(lapply(models, function(mod) {
+        load_all_conditions(mod, sigma = sigma, diploid = diploid,
+                            tag_prefix = tag_prefix)
+      }))
+    } else {
+      all_data <- load_all_sims(models, sigma = sigma, diploid_filter = diploid)
+    }
   }
   
   scenarios <- c("ET-ET", "ERpath-EThost", "ERhost-ETpath", "ER-ER")
@@ -2132,41 +2225,53 @@ scale_color_condition <- function(...)
 # --- Shared helper: load experiments from catalog ---
 load_all_conditions <- function(model_name, sigma = 0.1, diploid = NULL,
                                 include_pinned = FALSE, gamma_filter = 0.01,
-                                tag_filter = NA) {
+                                tag_filter = NA, tag_prefix = NULL) {
+
+  # Replicate-aware path: delegate to load_replicates when tag_prefix is set.
+  # This pools all replicates into one data frame with a 'rep' column,
+  # so downstream figures can either facet/color by rep or pool all data.
+  if (!is.null(tag_prefix)) {
+    df <- load_replicates(model_name, sigma = sigma, diploid = diploid,
+                          gamma_filter = gamma_filter, tag_prefix = tag_prefix)
+    if (nrow(df) == 0) return(tibble())
+    df <- df %>% mutate(sigma_label = sprintf("\u03c3 = %g", sigma))
+    return(df)
+  }
+
   cat <- discover_experiments()
-  
+
   # Filter to model
   sub <- cat %>% filter(fitness == model_name)
-  
+
   # Tag filter: NA (default) = exclude tagged runs; NULL = all; string = match
   if (is.na(tag_filter)) {
     sub <- sub %>% filter(is.na(tag))
   } else if (!is.null(tag_filter)) {
     sub <- sub %>% filter(!is.na(tag) & tag == tag_filter)
   }
-  
+
   # Diploid filter
   if (!is.null(diploid)) sub <- sub %>% filter(diploid == !!diploid)
-  
+
   # Sigma filter
   if (!is.null(sigma)) {
     sub <- sub %>% filter(abs(std_dev_move - sigma) < 1e-6)
   }
-  
+
   # Gamma filter — default to 0.01 to exclude gamma-sweep runs
   # NA gamma means legacy config (default 0.01), so include those too
   if (!is.null(gamma_filter)) {
     sub <- sub %>% filter(is.na(gamma) | abs(gamma - gamma_filter) < 1e-6)
   }
-  
+
   # Exclude or include pinned runs
-  
+
   if (!include_pinned) {
     sub <- sub %>% filter(is.na(fix_host), is.na(fix_path))
   }
-  
+
   if (nrow(sub) == 0) return(tibble())
-  
+
   # Nice condition labels — ordered ET/ET -> mixed -> ER/ER
   cond_labels <- c(
     "EThost_ETpath" = "ET / ET",
@@ -2176,13 +2281,13 @@ load_all_conditions <- function(model_name, sigma = 0.1, diploid = NULL,
   )
   cond_order <- c("ET / ET", "ET host / ER path",
                   "ER host / ET path", "ER / ER")
-  
+
   all_df <- load_sim_set(sub) %>%
     mutate(
       scenario = factor(cond_labels[condition], levels = cond_order),
       sigma_label = sprintf("\u03c3 = %g", sigma)
     )
-  
+
   # Label pinned runs
   if (include_pinned) {
     all_df <- all_df %>%
@@ -2195,7 +2300,7 @@ load_all_conditions <- function(model_name, sigma = 0.1, diploid = NULL,
         )
       )
   }
-  
+
   all_df
 }
 
@@ -2218,18 +2323,23 @@ load_all_conditions <- function(model_name, sigma = 0.1, diploid = NULL,
 #' @return tibble with columns: gen, v, s, condition, scenario, rep, ...
 load_replicates <- function(model_name, sigma = 0.1, diploid = NULL,
                             gamma_filter = 0.01, conditions = NULL,
-                            tag_filter = NA) {
+                            tag_filter = NA, tag_prefix = NULL,
+                            min_gen = MIN_GEN_CUTOFF) {
   cat <- discover_experiments()
-  
+
   sub <- cat %>% filter(fitness == model_name)
-  
-  # Tag filter: NA (default) = exclude tagged; NULL = all; string = match
-  if (is.na(tag_filter)) {
+
+  # Tag matching: tag_prefix takes precedence over tag_filter
+  # tag_prefix matches tags starting with a prefix (e.g. "final_r" matches
+  # "final_r1", "final_r2", "final_r3") and extracts rep number from suffix
+  if (!is.null(tag_prefix)) {
+    sub <- sub %>% filter(!is.na(tag) & grepl(paste0("^", tag_prefix), tag))
+  } else if (is.na(tag_filter)) {
     sub <- sub %>% filter(is.na(tag))
   } else if (!is.null(tag_filter)) {
     sub <- sub %>% filter(!is.na(tag) & tag == tag_filter)
   }
-  
+
   if (!is.null(diploid)) sub <- sub %>% filter(diploid == !!diploid)
   if (!is.null(sigma))   sub <- sub %>% filter(abs(std_dev_move - sigma) < 1e-6)
   if (!is.null(gamma_filter)) {
@@ -2237,16 +2347,16 @@ load_replicates <- function(model_name, sigma = 0.1, diploid = NULL,
   }
   # Exclude pinned runs
   sub <- sub %>% filter(is.na(fix_host), is.na(fix_path))
-  
+
   if (!is.null(conditions)) {
     sub <- sub %>% filter(condition %in% conditions)
   }
-  
+
   if (nrow(sub) == 0) {
     warning("No experiments found for ", model_name)
     return(tibble())
   }
-  
+
   # Nice labels
   cond_labels <- c(
     "EThost_ETpath" = "ET / ET",
@@ -2256,21 +2366,40 @@ load_replicates <- function(model_name, sigma = 0.1, diploid = NULL,
   )
   cond_order <- c("ET / ET", "ET host / ER path",
                   "ER host / ET path", "ER / ER")
-  
+
   # Load each row, tagging with rep
   all_dfs <- lapply(seq_len(nrow(sub)), function(i) {
     row <- sub[i, ]
     df <- read_csv(row$csv, show_col_types = FALSE)
-    rep_val <- if (is.na(row$rep)) 0L else as.integer(row$rep)
-    df %>% mutate(
-      condition = row$condition,
-      scenario  = factor(cond_labels[row$condition], levels = cond_order),
-      rep       = rep_val,
-      rep_label = paste0("rep ", rep_val)
-    )
+
+    # Extract rep number: prefer config rep field, else parse from tag suffix
+    if (!is.na(row$rep)) {
+      rep_val <- as.integer(row$rep)
+    } else if (!is.null(tag_prefix) && !is.na(row$tag)) {
+      suffix <- sub(paste0("^", tag_prefix), "", row$tag)
+      rep_val <- suppressWarnings(as.integer(suffix))
+      if (is.na(rep_val)) rep_val <- i  # fallback: use row index
+    } else {
+      rep_val <- 0L
+    }
+
+    df %>%
+      filter(event == "post", gen > min_gen) %>%
+      mutate(
+        condition = row$condition,
+        scenario  = factor(cond_labels[row$condition], levels = cond_order),
+        rep       = rep_val,
+        rep_label = paste0("rep ", rep_val),
+        omegaPath = suppressWarnings(as.numeric(omegaPath)),
+        omegaHost = suppressWarnings(as.numeric(omegaHost))
+      )
   })
-  
-  bind_rows(all_dfs)
+
+  result <- bind_rows(all_dfs)
+  n_reps <- length(unique(result$rep))
+  n_conds <- length(unique(result$condition))
+  cat("Loaded", n_reps, "replicates across", n_conds, "conditions for", model_name, "\n")
+  result
 }
 
 
@@ -2413,9 +2542,11 @@ fig_ts_stats <- function(model_name = "acute",
                          include_pinned = FALSE,
                          window = 2000, step = 500,
                          width = NULL, height = NULL,
-                         filename = "Figure_ts_stats") {
-  
-  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
+                         filename = "Figure_ts_stats",
+                         tag_filter = NA, tag_prefix = NULL) {
+
+  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned,
+                                tag_filter = tag_filter, tag_prefix = tag_prefix)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
@@ -2539,9 +2670,11 @@ fig_acf_decay <- function(model_name = "acute",
                           include_pinned = FALSE,
                           max_lag = 10000, thin_acf = 10,
                           width = NULL, height = NULL,
-                          filename = "Figure_acf_decay") {
-  
-  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
+                          filename = "Figure_acf_decay",
+                          tag_filter = NA, tag_prefix = NULL) {
+
+  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned,
+                                tag_filter = tag_filter, tag_prefix = tag_prefix)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
@@ -2629,9 +2762,11 @@ fig_step_sizes <- function(model_name = "acute",
                            sigma = 0.1, diploid = NULL,
                            include_pinned = FALSE,
                            width = NULL, height = NULL,
-                           filename = "Figure_step_sizes") {
-  
-  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
+                           filename = "Figure_step_sizes",
+                           tag_filter = NA, tag_prefix = NULL) {
+
+  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned,
+                                tag_filter = tag_filter, tag_prefix = tag_prefix)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
@@ -2689,9 +2824,11 @@ fig_neutral_drift <- function(model_name = "acute",
                               sigma = 0.1, diploid = NULL,
                               include_pinned = FALSE,
                               width = NULL, height = NULL,
-                              filename = "Figure_neutral_drift") {
-  
-  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
+                              filename = "Figure_neutral_drift",
+                              tag_filter = NA, tag_prefix = NULL) {
+
+  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned,
+                                tag_filter = tag_filter, tag_prefix = tag_prefix)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
@@ -2795,9 +2932,11 @@ fig_dwell_times <- function(model_name = "acute",
                             include_pinned = FALSE,
                             nash_radius = NULL,
                             width = NULL, height = NULL,
-                            filename = "Figure_dwell_times") {
-  
-  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
+                            filename = "Figure_dwell_times",
+                            tag_filter = NA, tag_prefix = NULL) {
+
+  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned,
+                                tag_filter = tag_filter, tag_prefix = tag_prefix)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
@@ -2897,9 +3036,11 @@ fig_boundary_occupancy <- function(model_name = "acute",
                                    sigma = 0.1, diploid = NULL,
                                    include_pinned = FALSE,
                                    width = NULL, height = NULL,
-                                   filename = "Figure_boundary_occupancy") {
-  
-  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
+                                   filename = "Figure_boundary_occupancy",
+                                   tag_filter = NA, tag_prefix = NULL) {
+
+  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned,
+                                tag_filter = tag_filter, tag_prefix = tag_prefix)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
@@ -2968,9 +3109,11 @@ fig_trait_density <- function(model_name = "acute",
                               sigma = 0.1, diploid = NULL,
                               include_pinned = FALSE,
                               width = NULL, height = NULL,
-                              filename = "Figure_trait_density") {
-  
-  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned)
+                              filename = "Figure_trait_density",
+                              tag_filter = NA, tag_prefix = NULL) {
+
+  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned,
+                                tag_filter = tag_filter, tag_prefix = tag_prefix)
   if (nrow(all_df) == 0) {
     warning("No data found"); return(invisible(NULL))
   }
@@ -3743,6 +3886,19 @@ fig_gamma_acf <- function(model_name = "acute",
 # fig_gamma_timeseries("minimal", filename = "Gamma_timeseries_minimal")
 # fig_gamma_summary("minimal", filename = "Gamma_summary_minimal")
 
+#Replicate overlay Usage:
+# Single replicate (unchanged)
+#fig_timeseries("minimal", "Time_series_minimal_sigma0.01",
+#                 diploid = TRUE, sigma = 0.01, tag_filter = "final_r1")
+
+# Replicate overlay
+#fig_timeseries("minimal", "Time_series_minimal_sigma0.01_reps",
+#               diploid = TRUE, sigma = 0.01, tag_prefix = "final_r")
+
+# Any downstream figure with replicates (pools data)
+#fig_trait_density("minimal", sigma = 0.01, diploid = TRUE,
+#                  tag_prefix = "final_r", filename = "Trait_density_minimal_reps")
+
 #-------
 #PLOTS#
 #-------
@@ -3800,8 +3956,13 @@ fig_timeseries("taylor", "Time_series_taylor_not_thinned", diploid = TRUE, max_p
 fig_timeseries("chronic", "Time_series_chronic", diploid = TRUE, max_pts = 100,
                sigma = 0.1, width = 9, height = 10, tag_filter = "v3")
 
+# Single replicate (backward compatible)
 fig_timeseries("minimal", "Time_series_minimal_sigma0.01", diploid = TRUE, max_pts = 100,
                sigma = 0.01, width = 9, height = 10, tag_filter = "final_r1")
+
+# Replicate overlay: loads final_r1, final_r2, final_r3 and overlays colored lines
+fig_timeseries("minimal", "Time_series_minimal_sigma0.01_reps", diploid = TRUE, max_pts = 100,
+               sigma = 0.01, width = 9, height = 10, tag_prefix = "final_r")
 
 # Specific variants
 # Works even if only some conditions exist for that variant
