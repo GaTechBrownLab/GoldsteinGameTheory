@@ -77,7 +77,7 @@ std_dev_angle = 0.1 * math.pi
 # (Goldstein 2020). gamma=1.0 gives equal rates.
 prob_host_mutate = 0.01
 
-NEUTRAL_THRESH = 1e-12
+NEUTRAL_THRESH = 0.01  # |s*N| threshold; matches Ohta's effectively-neutral regime
 
 # Separate effective population sizes (haploid)
 HOST_POP_N = 10_000
@@ -184,10 +184,12 @@ def kimura_fixation_prob(scoef: float, N: int) -> float:
     Kimura fixation probability.
     Haploid:           (1 - exp(-2s)) / (1 - exp(-2Ns))
     Diploid semi-dom:  (1 - exp(-2s)) / (1 - exp(-4Ns))
-    Near-neutral (|s| < threshold) returns 1/N (neutral drift).
+    Near-neutral (|s*N| < threshold) returns 1/N (haploid) or 1/(2N) (diploid).
     """
-    if abs(scoef) <= NEUTRAL_THRESH:
-        return 1.0 / N   # Neutral drift: fixation prob = 1/N
+    if abs(scoef * N) <= NEUTRAL_THRESH:
+        # Neutral drift: P_fix equals the frequency of one gene copy
+        # Haploid: 1/N;  Diploid: 1/(2N) because there are 2N gene copies
+        return 1.0 / (2 * N) if DIPLOID_KIMURA else 1.0 / N
     factor = 4.0 if DIPLOID_KIMURA else 2.0
     x = -factor * N * scoef
     if x > 700:
@@ -196,16 +198,15 @@ def kimura_fixation_prob(scoef: float, N: int) -> float:
         return 2.0 * scoef  # Strongly beneficial: approx 2s
     denom = 1.0 - math.exp(x)
     if abs(denom) < TINY:
-        return 1.0 / N
+        return 1.0 / (2 * N) if DIPLOID_KIMURA else 1.0 / N
     return (1.0 - math.exp(-2.0 * scoef)) / denom
 
 
 def kimura_rate(scoef: float, N: int) -> float:
     """
     Substitution rate = N * P_fix.
-    For equal-probability step bins, each step has equal mutation probability
-    (1/n_bins), so the rate weight is N * P_fix.
-    Neutral mutations contribute rate = 1 (N * 1/N = 1).
+    Haploid neutral rate = N * 1/N = 1.
+    Diploid neutral rate = N * 1/(2N) = 0.5.
     """
     return N * kimura_fixation_prob(scoef, N)
 
@@ -643,22 +644,25 @@ class Simulation:
         if not self.es:
             for (v2, s2) in self._propose_ET_mutants_host():
                 f2 = host_fitness(v2, s2)
-                scoef = (f2 - current_fit) / max(current_fit, TINY) if current_fit > TINY else 0.0
+                scoef = (f2 - current_fit) / (current_fit + TINY)
                 rate = kimura_rate(scoef, HOST_POP_N)
                 if rate > 1e-4:
                     candidates.append(( ("ET", v2, s2, scoef, {}), rate ))
                     cum_rate += rate
         else:
+            # Save state once before the loop; restore via assignment (not re-solving)
+            saved = (self.bS, self.s_angle, self.mS, self.v, self.s,
+                     self.host_fit, self.path_fit)
             for (bS2, s_ang2, mS2) in self._propose_ER_mutants_host():
-                bS_old, s_old_ang, mS_old = self.bS, self.s_angle, self.mS
                 self.bS, self.s_angle, self.mS = bS2, s_ang2, mS2
                 diag = self._refresh_equilibrium(selector="host")
                 f2 = self.host_fit
 
-                self.bS, self.s_angle, self.mS = bS_old, s_old_ang, mS_old
-                self._refresh_equilibrium(selector="host")
+                # Restore state without re-solving equilibrium
+                (self.bS, self.s_angle, self.mS, self.v, self.s,
+                 self.host_fit, self.path_fit) = saved
 
-                scoef = (f2 - current_fit) / max(current_fit, TINY) if current_fit > TINY else 0.0
+                scoef = (f2 - current_fit) / (current_fit + TINY)
                 rate = kimura_rate(scoef, HOST_POP_N)
                 if rate > 1e-4:
                     candidates.append(( ("ER", bS2, s_ang2, mS2, scoef, diag), rate ))
@@ -675,22 +679,25 @@ class Simulation:
         if not self.es:
             for (v2, s2) in self._propose_ET_mutants_path():
                 f2 = path_fitness(v2, s2)
-                scoef = (f2 - current_fit) / max(current_fit, TINY) if current_fit > TINY else 0.0
+                scoef = (f2 - current_fit) / (current_fit + TINY)
                 rate = kimura_rate(scoef, PATH_POP_N)
                 if rate > 1e-4:
                     candidates.append(( ("ET", v2, s2, scoef, {}), rate ))
                     cum_rate += rate
         else:
+            # Save state once before the loop; restore via assignment (not re-solving)
+            saved = (self.bV, self.v_angle, self.mV, self.v, self.s,
+                     self.host_fit, self.path_fit)
             for (bV2, v_ang2, mV2) in self._propose_ER_mutants_path():
-                bV_old, v_old_ang, mV_old = self.bV, self.v_angle, self.mV
                 self.bV, self.v_angle, self.mV = bV2, v_ang2, mV2
                 diag = self._refresh_equilibrium(selector="path")
                 f2 = self.path_fit
 
-                self.bV, self.v_angle, self.mV = bV_old, v_old_ang, mV_old
-                self._refresh_equilibrium(selector="path")
+                # Restore state without re-solving equilibrium
+                (self.bV, self.v_angle, self.mV, self.v, self.s,
+                 self.host_fit, self.path_fit) = saved
 
-                scoef = (f2 - current_fit) / max(current_fit, TINY) if current_fit > TINY else 0.0
+                scoef = (f2 - current_fit) / (current_fit + TINY)
                 rate = kimura_rate(scoef, PATH_POP_N)
                 if rate > 1e-4:
                     candidates.append(( ("ER", bV2, v_ang2, mV2, scoef, diag), rate ))

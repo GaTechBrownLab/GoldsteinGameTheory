@@ -1168,6 +1168,14 @@ line_panel <- function(df, y_var, ylab = NULL,
     if (rng[2] <= 1.05) {
       y_lims <- c(0, 1); y_breaks <- c(0, 0.5, 1)
     } else {
+      span <- rng[2] - rng[1]
+      # Enforce minimum span (10% of midpoint) so near-constant series
+      # don't zoom into numerical noise
+      min_span <- max(0.1 * mean(rng), 0.1)
+      if (span < min_span) {
+        mid <- mean(rng)
+        rng <- c(mid - min_span / 2, mid + min_span / 2)
+      }
       pad <- (rng[2] - rng[1]) * 0.05
       y_lims <- c(max(0, rng[1] - pad), rng[2] + pad)
       y_breaks <- pretty(y_lims, n = 4)
@@ -3761,6 +3769,7 @@ TRAIT_DISPLAY <- list(
 fig_landscape(model_name = "acute", filename = "Fitness_landscapes_acute")
 fig_landscape(model_name = "minimal", filename = "Fitness_landscapes_minimal")
 fig_landscape(model_name = "taylor", filename = "Fitness_landscapes_taylor")
+fig_landscape(model_name = "chronic", filename = "Fitness_landscapes_chronic")
 
 # strategy panels (analytical — no simulation data needed)
 fig_strategy_panels(model_name = "acute",   filename = "Strategies_acute")
@@ -3790,6 +3799,9 @@ fig_timeseries("taylor", "Time_series_taylor_not_thinned", diploid = TRUE, max_p
 
 fig_timeseries("chronic", "Time_series_chronic", diploid = TRUE, max_pts = 100,
                sigma = 0.1, width = 9, height = 10, tag_filter = "v3")
+
+fig_timeseries("minimal", "Time_series_minimal_sigma0.01", diploid = TRUE, max_pts = 100,
+               sigma = 0.01, width = 9, height = 10, tag_filter = "final_r1")
 
 # Specific variants
 # Works even if only some conditions exist for that variant
