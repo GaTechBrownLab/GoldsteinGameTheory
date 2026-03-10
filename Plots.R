@@ -1220,8 +1220,12 @@ line_panel <- function(df, y_var, ylab = NULL,
 }
 
 # --- Omega spike panel ---
+# Omega = cumulative substitution rate per player per generation.
+# Neutral rate = 1 (haploid) or 0.5 (diploid).
+# omega > 1 means positive selection is accelerating substitutions;
+# omega < 1 means most mutations are deleterious or nearly neutral.
 omega_panel <- function(df, who = c("Path", "Host"),
-                        cap = 1e6, bins = 2000,
+                        bins = 2000,
                         show_xlab = FALSE, show_ylab = TRUE, ylab = NULL,
                         x_lims = NULL, x_breaks = NULL, x_labels = NULL,
                         has_reps = FALSE) {
@@ -1237,14 +1241,36 @@ omega_panel <- function(df, who = c("Path", "Host"),
   rng <- range(x_lims)
   edges <- seq(rng[1], rng[2], length.out = bins + 1)
 
+  # Prepare data: filter to valid omega values
+  prep_omega <- function(d) {
+    d %>%
+      filter(gen >= rng[1], gen <= rng[2]) %>%
+      mutate(y = suppressWarnings(as.numeric(.data[[omega_col]]))) %>%
+      filter(!is.na(y), y > 0)
+  }
+
+  # Auto-scale y-axis from data
+  all_vals <- prep_omega(df)$y
+  if (length(all_vals) == 0) {
+    # No valid data — return empty panel
+    p <- ggplot() + theme_void()
+    if (show_ylab && !is.null(ylab)) p <- p + labs(y = ylab)
+    return(p)
+  }
+  y_max <- max(all_vals, na.rm = TRUE)
+  # Round up to nearest power of 10 for clean axis
+  y_ceil <- 10^ceiling(log10(y_max * 1.2))
+  y_floor <- 10^floor(log10(max(min(all_vals, na.rm = TRUE), 1e-6)))
+  # Ensure at least 2 orders of magnitude for readability
+  if (y_ceil / y_floor < 100) y_floor <- y_ceil / 100
+  y_lims <- c(y_floor, y_ceil)
+  y_breaks <- 10^seq(log10(y_floor), log10(y_ceil))
+
   # If replicates, bin per replicate
   if (has_reps && "rep" %in% names(df)) {
-    dat <- df %>%
-      filter(gen >= rng[1], gen <= rng[2]) %>%
-      transmute(
-        x = gen,
-        y = pmin(cap, pmax(1e-12, as.numeric(.data[[omega_col]]))),
-        rep = factor(rep),
+    dat <- prep_omega(df) %>%
+      mutate(
+        x = gen, rep = factor(rep),
         lbin = cut(gen, breaks = edges, include.lowest = TRUE)
       ) %>%
       group_by(rep, lbin) %>%
@@ -1254,16 +1280,13 @@ omega_panel <- function(df, who = c("Path", "Host"),
     n_reps <- length(unique(dat$rep))
     al <- if (n_reps <= 3) 0.6 else 0.4
     p <- ggplot(dat) +
-      geom_segment(aes(x = x, xend = x, y = 1e-2, yend = pmax(1e-2, y),
-                       color = rep),
-                   linewidth = 0.3, alpha = al) +
+      geom_line(aes(x = x, y = y, color = rep),
+                linewidth = 0.3, alpha = al) +
       scale_color_manual(values = REP_COLORS, guide = "none")
   } else {
-    dat <- df %>%
-      filter(gen >= rng[1], gen <= rng[2]) %>%
-      transmute(
+    dat <- prep_omega(df) %>%
+      mutate(
         x = gen,
-        y = pmin(cap, pmax(1e-12, as.numeric(.data[[omega_col]]))),
         lbin = cut(gen, breaks = edges, include.lowest = TRUE)
       ) %>%
       group_by(lbin) %>%
@@ -1271,15 +1294,16 @@ omega_panel <- function(df, who = c("Path", "Host"),
       ungroup()
 
     p <- ggplot(dat) +
-      geom_segment(aes(x = x, xend = x, y = 1e-2, yend = pmax(1e-2, y)),
-                   linewidth = 0.35, alpha = 0.9)
+      geom_line(aes(x = x, y = y),
+                linewidth = 0.35, alpha = 0.9)
   }
 
   p <- p +
     scale_x_continuous(limits = x_lims, breaks = x_breaks, labels = x_labels) +
-    scale_y_log10(limits = W_LIMS_LOG, breaks = W_BREAKS_LOG,
-                  labels = W_LABS_LOG, minor_breaks = NULL) +
-    coord_cartesian(xlim = x_lims, ylim = W_LIMS_LOG) +
+    scale_y_log10(limits = y_lims, breaks = y_breaks,
+                  labels = trans_format("log10", math_format(10^.x)),
+                  minor_breaks = NULL) +
+    coord_cartesian(xlim = x_lims, ylim = y_lims) +
     mytheme
 
   if (show_ylab && !is.null(ylab)) p <- p + labs(y = ylab)
@@ -1702,11 +1726,17 @@ fig_snapshots <- function(es_data = NULL, model_name = "acute",
                           condition = "ERhost_ERpath", sigma = 0.1,
                           diploid = NULL,
                           width = NULL, height = NULL,
-                          filename = "Figure5_snapshots") {
-  
+                          filename = "Figure5_snapshots",
+                          tag_filter = NA, tag_prefix = NULL) {
+
   if (is.null(es_data)) {
-    es_data <- load_sim(model_name, condition, sigma = sigma,
-                        diploid_filter = diploid)
+    if (!is.null(tag_prefix)) {
+      es_data <- load_replicates(model_name, sigma = sigma, diploid = diploid,
+                                 conditions = condition, tag_prefix = tag_prefix)
+    } else {
+      es_data <- load_sim(model_name, condition, sigma = sigma,
+                          diploid_filter = diploid, tag_filter = tag_filter)
+    }
     if (is.null(es_data) || nrow(es_data) == 0) {
       warning("No data found for ", model_name, "/", condition)
       return(invisible(NULL))
@@ -1852,10 +1882,16 @@ fig_nash_violation_map <- function(model_name = "acute",
                                    diploid = NULL,
                                    resolution = 80,
                                    width = NULL, height = NULL,
-                                   filename = NULL) {
+                                   filename = NULL,
+                                   tag_filter = NA, tag_prefix = NULL) {
   if (is.null(es_data)) {
-    es_data <- load_sim(model_name, condition, sigma = sigma,
-                        diploid_filter = diploid)
+    if (!is.null(tag_prefix)) {
+      es_data <- load_replicates(model_name, sigma = sigma, diploid = diploid,
+                                 conditions = condition, tag_prefix = tag_prefix)
+    } else {
+      es_data <- load_sim(model_name, condition, sigma = sigma,
+                          diploid_filter = diploid, tag_filter = tag_filter)
+    }
   }
   
   vgrid <- calc_violation_grid(model_name, resolution)
@@ -1902,11 +1938,17 @@ fig_slope_distribution <- function(es_data = NULL,
                                    diploid = NULL,
                                    filename = NULL,
                                    width = NULL, height = NULL,
-                                   title_label = "Phase Space: Strategy Slopes") {
-  
+                                   title_label = "Phase Space: Strategy Slopes",
+                                   tag_filter = NA, tag_prefix = NULL) {
+
   if (is.null(es_data)) {
-    es_data <- load_sim(model_name, condition, sigma = sigma,
-                        diploid_filter = diploid)
+    if (!is.null(tag_prefix)) {
+      es_data <- load_replicates(model_name, sigma = sigma, diploid = diploid,
+                                 conditions = condition, tag_prefix = tag_prefix)
+    } else {
+      es_data <- load_sim(model_name, condition, sigma = sigma,
+                          diploid_filter = diploid, tag_filter = tag_filter)
+    }
     if (is.null(es_data) || nrow(es_data) == 0) {
       warning("No data found for ", model_name, "/", condition)
       return(invisible(NULL))
@@ -1983,15 +2025,21 @@ fig_nash_combined <- function(model_name = "acute",
                               condition = "ERhost_ERpath", sigma = 0.1,
                               diploid = NULL,
                               width = NULL, height = NULL,
-                              filename = "Figure6_Nash") {
-  
+                              filename = "Figure6_Nash",
+                              tag_filter = NA, tag_prefix = NULL) {
+
   if (is.null(es_data)) {
-    es_data <- load_sim(model_name, condition, sigma = sigma,
-                        diploid_filter = diploid)
+    if (!is.null(tag_prefix)) {
+      es_data <- load_replicates(model_name, sigma = sigma, diploid = diploid,
+                                 conditions = condition, tag_prefix = tag_prefix)
+    } else {
+      es_data <- load_sim(model_name, condition, sigma = sigma,
+                          diploid_filter = diploid, tag_filter = tag_filter)
+    }
   }
-  
+
   pA <- fig_nash_violation_map(model_name, es_data)
-  
+
   pB <- if (!is.null(es_data) && "mS" %in% names(es_data))
     fig_slope_distribution(es_data)
   else
@@ -2019,11 +2067,17 @@ fig_strategy_evolution <- function(es_data = NULL, model_name = "acute",
                                    condition = "ERhost_ERpath", sigma = 0.1,
                                    diploid = NULL,
                                    filename = "Figure_strategy_params",
-                                   width = NULL, height = NULL) {
-  
+                                   width = NULL, height = NULL,
+                                   tag_filter = NA, tag_prefix = NULL) {
+
   if (is.null(es_data)) {
-    es_data <- load_sim(model_name, condition, sigma = sigma,
-                        diploid_filter = diploid)
+    if (!is.null(tag_prefix)) {
+      es_data <- load_replicates(model_name, sigma = sigma, diploid = diploid,
+                                 conditions = condition, tag_prefix = tag_prefix)
+    } else {
+      es_data <- load_sim(model_name, condition, sigma = sigma,
+                          diploid_filter = diploid, tag_filter = tag_filter)
+    }
     if (is.null(es_data) || nrow(es_data) == 0) {
       warning("No data found for ", model_name, "/", condition)
       return(invisible(NULL))
