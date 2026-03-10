@@ -742,7 +742,7 @@ class Simulation:
         if total_rate <= 0.0:
             self.zero_rate_streak += 1
             return {"mutator": "none", "chosen": None,
-                    "omega_host": self.host_fit, "omega_path": self.path_fit,
+                    "omega_host": 0.0, "omega_path": 0.0,
                     "nash": "", "stable_fp": "", "host_max_flag": "", "path_max_flag": "",
                     "dwell": 1.0,
                     "cum_host_rate": 0.0, "cum_path_rate": 0.0}
@@ -782,7 +782,7 @@ class Simulation:
             self.path_fit = path_fitness(self.v, self.s)
             return {"mutator": mutator,
                     "chosen": ("ET", scoef, "ET", v_new, s_new),
-                    "omega_host": self.host_fit, "omega_path": self.path_fit,
+                    "omega_host": cum_host_rate, "omega_path": cum_path_rate,
                     "nash": "", "stable_fp": "", "host_max_flag": "", "path_max_flag": "",
                     "dwell": dwell,
                     "cum_host_rate": cum_host_rate, "cum_path_rate": cum_path_rate}
@@ -799,7 +799,7 @@ class Simulation:
 
             return {"mutator": mutator,
                     "chosen": ("ER", scoef, "ER", self.v, self.s),
-                    "omega_host": self.host_fit, "omega_path": self.path_fit,
+                    "omega_host": cum_host_rate, "omega_path": cum_path_rate,
                     "nash": diag["nash"], "stable_fp": diag["stable_fp"],
                     "host_max_flag": diag["host_max_flag"], "path_max_flag": diag["path_max_flag"],
                     "dwell": dwell,
