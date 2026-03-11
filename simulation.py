@@ -204,11 +204,11 @@ def kimura_fixation_prob(scoef: float, N: int) -> float:
 
 def kimura_rate(scoef: float, N: int) -> float:
     """
-    Substitution rate = N * P_fix.
-    Haploid neutral rate = N * 1/N = 1.
-    Diploid neutral rate = N * 1/(2N) = 0.5.
+    Substitution rate = 2N * P_fix  (matches Java computeProbAcceptance).
+    Haploid neutral rate = 2N * 1/N = 2.
+    Diploid neutral rate = 2N * 1/(2N) = 1.
     """
-    return N * kimura_fixation_prob(scoef, N)
+    return 2 * N * kimura_fixation_prob(scoef, N)
 
 
 # ============================================================
@@ -635,25 +635,30 @@ class Simulation:
     # Evaluate all mutations for one player, return candidates + cumulative rate
     # ----------------------------------------------------------
 
-    def _evaluate_host_mutations(self) -> Tuple[List[Tuple], float]:
-        """Returns (candidate_list, cumulative_rate) for host."""
+    def _evaluate_host_mutations(self) -> Tuple[List[Tuple], float, float]:
+        """Returns (candidate_list, cumulative_rate, neutral_count) for host."""
         candidates = []
         cum_rate = 0.0
+        neut_count = 0.0
         current_fit = self.host_fit
 
         if not self.es:
+            # ET mode: sFactor = num trait steps (matches Java)
+            s_factor = len(self._trait_steps)
             for (v2, s2) in self._propose_ET_mutants_host():
+                neut_count += s_factor
                 f2 = host_fitness(v2, s2)
                 scoef = (f2 - current_fit) / (current_fit + TINY)
-                rate = kimura_rate(scoef, HOST_POP_N)
+                rate = kimura_rate(scoef, HOST_POP_N) * s_factor
                 if rate > 1e-4:
                     candidates.append(( ("ET", v2, s2, scoef, {}), rate ))
                     cum_rate += rate
         else:
-            # Save state once before the loop; restore via assignment (not re-solving)
+            # ER mode: sFactor = 1
             saved = (self.bS, self.s_angle, self.mS, self.v, self.s,
                      self.host_fit, self.path_fit)
             for (bS2, s_ang2, mS2) in self._propose_ER_mutants_host():
+                neut_count += 1
                 self.bS, self.s_angle, self.mS = bS2, s_ang2, mS2
                 diag = self._refresh_equilibrium(selector="host")
                 f2 = self.host_fit
@@ -668,27 +673,32 @@ class Simulation:
                     candidates.append(( ("ER", bS2, s_ang2, mS2, scoef, diag), rate ))
                     cum_rate += rate
 
-        return candidates, cum_rate
+        return candidates, cum_rate, neut_count
 
-    def _evaluate_path_mutations(self) -> Tuple[List[Tuple], float]:
-        """Returns (candidate_list, cumulative_rate) for pathogen."""
+    def _evaluate_path_mutations(self) -> Tuple[List[Tuple], float, float]:
+        """Returns (candidate_list, cumulative_rate, neutral_count) for pathogen."""
         candidates = []
         cum_rate = 0.0
+        neut_count = 0.0
         current_fit = self.path_fit
 
         if not self.es:
+            # ET mode: vFactor = num trait steps (matches Java)
+            v_factor = len(self._trait_steps)
             for (v2, s2) in self._propose_ET_mutants_path():
+                neut_count += v_factor
                 f2 = path_fitness(v2, s2)
                 scoef = (f2 - current_fit) / (current_fit + TINY)
-                rate = kimura_rate(scoef, PATH_POP_N)
+                rate = kimura_rate(scoef, PATH_POP_N) * v_factor
                 if rate > 1e-4:
                     candidates.append(( ("ET", v2, s2, scoef, {}), rate ))
                     cum_rate += rate
         else:
-            # Save state once before the loop; restore via assignment (not re-solving)
+            # ER mode: vFactor = 1
             saved = (self.bV, self.v_angle, self.mV, self.v, self.s,
                      self.host_fit, self.path_fit)
             for (bV2, v_ang2, mV2) in self._propose_ER_mutants_path():
+                neut_count += 1
                 self.bV, self.v_angle, self.mV = bV2, v_ang2, mV2
                 diag = self._refresh_equilibrium(selector="path")
                 f2 = self.path_fit
@@ -703,7 +713,7 @@ class Simulation:
                     candidates.append(( ("ER", bV2, v_ang2, mV2, scoef, diag), rate ))
                     cum_rate += rate
 
-        return candidates, cum_rate
+        return candidates, cum_rate, neut_count
 
     # ----------------------------------------------------------
     # Gillespie step: evaluate both players, choose proportionally
@@ -725,14 +735,18 @@ class Simulation:
 
         # Evaluate all mutations for both players
         if host_pinned:
-            host_candidates, cum_host_rate = [], 0.0
+            host_candidates, cum_host_rate, neut_host = [], 0.0, 0.0
         else:
-            host_candidates, cum_host_rate = self._evaluate_host_mutations()
+            host_candidates, cum_host_rate, neut_host = self._evaluate_host_mutations()
 
         if path_pinned:
-            path_candidates, cum_path_rate = [], 0.0
+            path_candidates, cum_path_rate, neut_path = [], 0.0, 0.0
         else:
-            path_candidates, cum_path_rate = self._evaluate_path_mutations()
+            path_candidates, cum_path_rate, neut_path = self._evaluate_path_mutations()
+
+        # Omega = cumulative rate / neutral count (matches Java)
+        omega_host = cum_host_rate / neut_host if neut_host > 0 else 0.0
+        omega_path = cum_path_rate / neut_path if neut_path > 0 else 0.0
 
         # Weight by mutation probability asymmetry
         weighted_host = prob_host_mutate * cum_host_rate
@@ -782,7 +796,7 @@ class Simulation:
             self.path_fit = path_fitness(self.v, self.s)
             return {"mutator": mutator,
                     "chosen": ("ET", scoef, "ET", v_new, s_new),
-                    "omega_host": cum_host_rate, "omega_path": cum_path_rate,
+                    "omega_host": omega_host, "omega_path": omega_path,
                     "nash": "", "stable_fp": "", "host_max_flag": "", "path_max_flag": "",
                     "dwell": dwell,
                     "cum_host_rate": cum_host_rate, "cum_path_rate": cum_path_rate}
@@ -799,7 +813,7 @@ class Simulation:
 
             return {"mutator": mutator,
                     "chosen": ("ER", scoef, "ER", self.v, self.s),
-                    "omega_host": cum_host_rate, "omega_path": cum_path_rate,
+                    "omega_host": omega_host, "omega_path": omega_path,
                     "nash": diag["nash"], "stable_fp": diag["stable_fp"],
                     "host_max_flag": diag["host_max_flag"], "path_max_flag": diag["path_max_flag"],
                     "dwell": dwell,
