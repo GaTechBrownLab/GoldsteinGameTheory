@@ -1199,9 +1199,10 @@ line_panel <- function(df, y_var, ylab = NULL,
     lw <- if (n_reps <= 3) 0.4 else 0.3
     al <- if (n_reps <= 3) 0.7 else 0.5
     p <- ggplot(df, aes(x = gen, y = .data[[y_var]],
-                        color = factor(rep), group = rep)) +
+                        color = factor(rep, levels = names(REP_COLORS)),
+                        group = rep)) +
       geom_fn(linewidth = lw, alpha = al) +
-      scale_color_manual(values = REP_COLORS, guide = "none")
+      scale_color_manual(values = REP_COLORS, guide = "none", drop = TRUE)
   } else {
     p <- ggplot(df, aes(x = gen, y = .data[[y_var]])) +
       geom_fn(linewidth = 0.5, alpha = 0.85)
@@ -1229,7 +1230,6 @@ line_panel <- function(df, y_var, ylab = NULL,
 # omega > 1 means positive selection is accelerating substitutions;
 # omega < 1 means most mutations are deleterious or nearly neutral.
 omega_panel <- function(df, who = c("Path", "Host"),
-                        bins = 2000,
                         show_xlab = FALSE, show_ylab = TRUE, ylab = NULL,
                         x_lims = NULL, x_breaks = NULL, x_labels = NULL,
                         has_reps = FALSE) {
@@ -1243,14 +1243,14 @@ omega_panel <- function(df, who = c("Path", "Host"),
   }
 
   rng <- range(x_lims)
-  edges <- seq(rng[1], rng[2], length.out = bins + 1)
 
-  # Prepare data: filter to valid omega values
+  # Prepare data: clamp zero/NA omega to tiny value so lines stay connected
   prep_omega <- function(d) {
     d %>%
       filter(gen >= rng[1], gen <= rng[2]) %>%
       mutate(y = suppressWarnings(as.numeric(.data[[omega_col]]))) %>%
-      filter(!is.na(y), y > 0)
+      filter(!is.na(y)) %>%
+      mutate(y = pmax(y, 1e-10))
   }
 
   # Fixed y-axis limits: 10^-2 to 10^6
@@ -1261,35 +1261,23 @@ omega_panel <- function(df, who = c("Path", "Host"),
     if (show_ylab && !is.null(ylab)) p <- p + labs(y = ylab)
     return(p)
   }
-  y_lims <- c(1e-2, 1e12)
-  y_breaks <- c(1e-2, 1e2, 1e6, 1e10)
+  y_lims <- c(1e-2, 1e8)
+  y_breaks <- c(1e-2, 1e2, 1e6)
 
-  # If replicates, bin per replicate
+  # Plot omega directly (no binning — keeps lines connected)
   if (has_reps && "rep" %in% names(df)) {
     dat <- prep_omega(df) %>%
-      mutate(
-        x = gen, rep = factor(rep),
-        lbin = cut(gen, breaks = edges, include.lowest = TRUE)
-      ) %>%
-      group_by(rep, lbin) %>%
-      slice_max(order_by = y, n = 1, with_ties = FALSE) %>%
-      ungroup()
+      mutate(x = gen, rep = factor(rep, levels = names(REP_COLORS)))
 
     n_reps <- length(unique(dat$rep))
     al <- if (n_reps <= 3) 0.6 else 0.4
     p <- ggplot(dat) +
-      geom_line(aes(x = x, y = y, color = rep),
+      geom_line(aes(x = x, y = y, color = rep, group = rep),
                 linewidth = 0.3, alpha = al) +
-      scale_color_manual(values = REP_COLORS, guide = "none")
+      scale_color_manual(values = REP_COLORS, guide = "none", drop = TRUE)
   } else {
     dat <- prep_omega(df) %>%
-      mutate(
-        x = gen,
-        lbin = cut(gen, breaks = edges, include.lowest = TRUE)
-      ) %>%
-      group_by(lbin) %>%
-      slice_max(order_by = y, n = 1, with_ties = FALSE) %>%
-      ungroup()
+      mutate(x = gen)
 
     p <- ggplot(dat) +
       geom_line(aes(x = x, y = y),
@@ -1298,7 +1286,7 @@ omega_panel <- function(df, who = c("Path", "Host"),
 
   p <- p +
     scale_x_continuous(limits = x_lims, breaks = x_breaks, labels = x_labels) +
-    scale_y_log10(limits = y_lims, breaks = y_breaks,
+    scale_y_log10(breaks = y_breaks,
                   labels = trans_format("log10", math_format(10^.x)),
                   minor_breaks = NULL) +
     coord_cartesian(xlim = x_lims, ylim = y_lims) +
@@ -4060,7 +4048,7 @@ fig_timeseries("minimal", "Time_series_minimal_sigma0.01", diploid = TRUE, max_p
                sigma = 0.01, width = 9, height = 10, tag_filter = "final_r1")
 
 # Replicate overlay: loads final_r1, final_r2, final_r3 and overlays colored lines
-fig_timeseries("minimal", "Time_series_minimal_sigma0.01_reps", diploid = TRUE, max_pts = 100,
+fig_timeseries("minimal", "Time_series_minimal_sigma0.01_reps", diploid = TRUE, max_pts = Inf,
                sigma = 0.01, width = 9, height = 10, tag_prefix = "final")
 
 # Specific variants

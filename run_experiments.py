@@ -207,7 +207,7 @@ def run_single_condition(
         "prob_host_mutate": sim.prob_host_mutate,
         "FIX_HOST_TRAIT": fix_host_trait if fix_host_trait is not None else False,
         "FIX_PATH_TRAIT": fix_path_trait if fix_path_trait is not None else False,
-        "rep": rep,
+        "rep": rep if rep is not None else 0,
         "tag": tag,
         "seed_base": params["seed_base"],
         "effective_seed": effective_seed,
