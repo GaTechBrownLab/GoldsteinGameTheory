@@ -624,7 +624,9 @@ load_all_sims <- function(models = c("acute", "minimal"),
   bind_rows(
     lapply(models, function(mod) {
       bind_rows(lapply(scenarios, function(sc) {
-        load_sim(mod, sc, sigma = sigma, diploid_filter = diploid_filter)
+        d <- load_sim(mod, sc, sigma = sigma, diploid_filter = diploid_filter)
+        if (!is.null(d) && nrow(d) > 0) d <- d %>% mutate(fitness = mod)
+        d
       }))
     })
   ) %>%
@@ -1075,9 +1077,9 @@ fig_strategy_panels <- function(model_name = "acute",
 
 # Shared axis settings — DEFAULTS for 1M-gen runs.
 # Auto-overridden by auto_time_axis() when data is passed.
-X_LIMS_LIN   <- c(1e4, 1e6)
-X_BREAKS_LIN <- c(10000, 505000, 1e6)
-X_LABS_LIN   <- c("10K", "505K", "1M")
+X_LIMS_LIN   <- c(1, 1e6)
+X_BREAKS_LIN <- c(1, 505000, 1e6)
+X_LABS_LIN   <- c("1", "505K", "1M")
 W_LIMS_LOG   <- c(1e-2, 1e6)
 W_BREAKS_LOG <- c(1e-2, 1e2, 1e6)
 W_LABS_LOG   <- trans_format("log10", math_format(10^.x))
@@ -1115,7 +1117,9 @@ auto_time_axis <- function(df, n_breaks = 3) {
   }
   
   labs <- sapply(brk, fmt_label)
-  list(lims = c(lo, hi), breaks = brk, labels = labs)
+  # Nudge lower limit slightly so the first label isn't clipped at the edge
+  plot_lo <- if (lo <= 1) -2e4 else lo * 0.98
+  list(lims = c(plot_lo, hi), breaks = brk, labels = labs)
 }
 
 
@@ -1147,9 +1151,9 @@ auto_trait_axis <- function(model_name = NULL, df = NULL, y_var = NULL) {
 # use_step: if TRUE, uses geom_step instead of geom_line (better for SSWM data)
 # Replicate color palette (colorblind-friendly, up to 9 replicates)
 REP_COLORS <- c("1" = "#1B9E77", "2" = "#D95F02", "3" = "#7570B3",
-                "4" = "#E7298A", "5" = "#66A61E", "6" = "#E6AB02",
+                "4" = "#E7298A", "5" = "#2D3748", "6" = "#E6AB02",
                 "7" = "#A6761D", "8" = "#666666", "9" = "#1F78B4",
-                "0" = "#2D3748")
+                "0" = "#66A61E")
 
 line_panel <- function(df, y_var, ylab = NULL,
                        show_xlab = FALSE, show_ylab = TRUE,
@@ -1213,7 +1217,7 @@ line_panel <- function(df, y_var, ylab = NULL,
   else p <- p + labs(y = NULL) +
     theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
 
-  if (show_xlab) p <- p + labs(x = "Evolutionary time")
+  if (show_xlab) p <- p + labs(x = NULL)
   else p <- p + labs(x = NULL) +
     theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
   p
@@ -1249,7 +1253,7 @@ omega_panel <- function(df, who = c("Path", "Host"),
       filter(!is.na(y), y > 0)
   }
 
-  # Auto-scale y-axis from data
+  # Fixed y-axis limits: 10^-2 to 10^6
   all_vals <- prep_omega(df)$y
   if (length(all_vals) == 0) {
     # No valid data — return empty panel
@@ -1257,14 +1261,8 @@ omega_panel <- function(df, who = c("Path", "Host"),
     if (show_ylab && !is.null(ylab)) p <- p + labs(y = ylab)
     return(p)
   }
-  y_max <- max(all_vals, na.rm = TRUE)
-  # Round up to nearest power of 10 for clean axis
-  y_ceil <- 10^ceiling(log10(y_max * 1.2))
-  y_floor <- 10^floor(log10(max(min(all_vals, na.rm = TRUE), 1e-6)))
-  # Ensure at least 2 orders of magnitude for readability
-  if (y_ceil / y_floor < 100) y_floor <- y_ceil / 100
-  y_lims <- c(y_floor, y_ceil)
-  y_breaks <- 10^seq(log10(y_floor), log10(y_ceil))
+  y_lims <- c(1e-2, 1e12)
+  y_breaks <- c(1e-2, 1e2, 1e6, 1e10)
 
   # If replicates, bin per replicate
   if (has_reps && "rep" %in% names(df)) {
@@ -1310,7 +1308,7 @@ omega_panel <- function(df, who = c("Path", "Host"),
   else p <- p + labs(y = NULL) +
     theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
 
-  if (show_xlab) p <- p + labs(x = "Evolutionary time")
+  if (show_xlab) p <- p + labs(x = NULL)
   else p <- p + labs(x = NULL) +
     theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
   p
@@ -1474,7 +1472,7 @@ fig_timeseries <- function(model_name = "acute", filename = NULL,
     ylab <- if (who == "Path") expression(omega[P]) else expression(omega[H])
     is_last <- (who == "Host")
     for (ci in seq_along(active_conds)) {
-      panels[[length(panels) + 1]] <- omega_panel(
+      p <- omega_panel(
         active_dfs[[ci]], who,
         ylab = ylab,
         show_ylab = (ci == 1),
@@ -1482,6 +1480,11 @@ fig_timeseries <- function(model_name = "acute", filename = NULL,
         x_lims = tax$lims, x_breaks = tax$breaks, x_labels = tax$labels,
         has_reps = has_reps
       )
+      # X-axis title only on bottom-left panel
+      if (is_last && ci == 1) {
+        p <- p + labs(x = "Generation")
+      }
+      panels[[length(panels) + 1]] <- p
     }
   }
 
@@ -1578,27 +1581,40 @@ fig_hex_combined <- function(all_data = NULL, models = c("acute", "minimal"),
     if (!is.null(tag_prefix)) {
       # Replicate-aware: pool all replicates across models
       all_data <- bind_rows(lapply(models, function(mod) {
-        load_all_conditions(mod, sigma = sigma, diploid = diploid,
+        d <- load_all_conditions(mod, sigma = sigma, diploid = diploid,
                             tag_prefix = tag_prefix)
+        if (nrow(d) > 0) d <- d %>% mutate(fitness = mod)
+        d
       }))
     } else {
       all_data <- load_all_sims(models, sigma = sigma, diploid_filter = diploid)
     }
   }
   
-  scenarios <- c("ET-ET", "ERpath-EThost", "ERhost-ETpath", "ER-ER")
+  cond_names <- c("EThost_ETpath", "EThost_ERpath", "ERhost_ETpath", "ERhost_ERpath")
   col_titles <- c("ET / ET", "ET host / ER path",
                   "ER host / ET path", "ER / ER")
-  
+  # Support both old scenario codes and new condition names
+  scenario_map <- c("EThost_ETpath" = "ET-ET", "EThost_ERpath" = "ERpath-EThost",
+                    "ERhost_ETpath" = "ERhost-ETpath", "ERhost_ERpath" = "ER-ER")
+
   panels <- list()
   n_mod <- length(models)
-  
+
   for (mi in seq_along(models)) {
     mod <- models[mi]
     is_bottom <- (mi == n_mod)
-    for (ci in seq_along(scenarios)) {
-      sc <- scenarios[ci]
-      d <- all_data %>% filter(fitness == mod, scenario == sc)
+    for (ci in seq_along(cond_names)) {
+      cn <- cond_names[ci]
+      sc_old <- scenario_map[cn]
+      # Match by condition name, old scenario code, or nice label
+      has_cond <- "condition" %in% names(all_data)
+      has_sc   <- "scenario"  %in% names(all_data)
+      d <- all_data %>% filter(
+        fitness == mod,
+        (has_cond & condition == cn) |
+        (has_sc & (scenario == sc_old | scenario == col_titles[ci]))
+      )
       if (nrow(d) == 0) {
         panels[[length(panels) + 1]] <- ggplot() + theme_void()
         next
@@ -1624,7 +1640,7 @@ fig_hex_combined <- function(all_data = NULL, models = c("acute", "minimal"),
     }
   }
   
-  n_sc <- length(scenarios)
+  n_sc <- length(cond_names)
   combined <- wrap_plots(panels, ncol = n_sc, byrow = TRUE) +
     plot_annotation(tag_levels = "A") &
     theme(plot.tag = element_text(face = "bold", size = 12))
@@ -1653,9 +1669,9 @@ make_snapshot_panel <- function(es_data, gen_num, grid,
                                 show_x_label = FALSE, show_y_label = FALSE,
                                 model_name = "acute") {
   
-  snapshot <- es_data %>% filter(gen == gen_num)
+  snapshot <- es_data %>% filter(gen == gen_num) %>% slice(1)
   if (nrow(snapshot) == 0) return(NULL)
-  
+
   prev <- es_data %>%
     filter(gen <= gen_num - lag_gens) %>%
     arrange(desc(gen)) %>% slice(1)
@@ -1730,19 +1746,21 @@ fig_snapshots <- function(es_data = NULL, model_name = "acute",
                           tag_filter = NA, tag_prefix = NULL) {
 
   if (is.null(es_data)) {
+    # Snapshots show strategy lines at specific generations — overlaying
+    # replicates would be unreadable, so use first replicate only.
     if (!is.null(tag_prefix)) {
-      es_data <- load_replicates(model_name, sigma = sigma, diploid = diploid,
-                                 conditions = condition, tag_prefix = tag_prefix)
-    } else {
-      es_data <- load_sim(model_name, condition, sigma = sigma,
-                          diploid_filter = diploid, tag_filter = tag_filter)
+      tag_filter <- paste0(tag_prefix, "1")
+      cat("  Snapshots: using first replicate (", tag_filter, ")\n")
     }
-    if (is.null(es_data) || nrow(es_data) == 0) {
-      warning("No data found for ", model_name, "/", condition)
+    es_data <- load_sim(model_name, condition, sigma = sigma,
+                        diploid_filter = diploid, tag_filter = tag_filter)
+    if (is.null(es_data) || !is.data.frame(es_data) || nrow(es_data) == 0) {
+      warning("No data found for ", model_name, "/", condition,
+              " (tag_filter=", tag_filter, ")")
       return(invisible(NULL))
     }
   }
-  
+
   grid <- make_fitness_grid(model_name, resolution = 200)
   
   # Pick snapshot generations
@@ -2070,8 +2088,10 @@ fig_strategy_evolution <- function(es_data = NULL, model_name = "acute",
                                    width = NULL, height = NULL,
                                    tag_filter = NA, tag_prefix = NULL) {
 
+  has_reps <- !is.null(tag_prefix)
+
   if (is.null(es_data)) {
-    if (!is.null(tag_prefix)) {
+    if (has_reps) {
       es_data <- load_replicates(model_name, sigma = sigma, diploid = diploid,
                                  conditions = condition, tag_prefix = tag_prefix)
     } else {
@@ -2083,17 +2103,25 @@ fig_strategy_evolution <- function(es_data = NULL, model_name = "acute",
       return(invisible(NULL))
     }
   }
-  
-  thin <- es_data %>%
-    mutate(row_num = row_number()) %>%
-    filter(row_num %% 10 == 0)
-  
+
+  # Thin per replicate if needed
+  if (has_reps && "rep" %in% names(es_data)) {
+    thin <- es_data %>%
+      group_by(rep) %>%
+      mutate(row_num = row_number()) %>%
+      filter(row_num %% 10 == 0) %>%
+      ungroup()
+  } else {
+    thin <- es_data %>%
+      mutate(row_num = row_number()) %>%
+      filter(row_num %% 10 == 0)
+  }
+
   # Auto-detect appropriate x-axis
   gen_range <- range(thin$gen, na.rm = TRUE)
-  use_log <- gen_range[2] > 1e5  # log scale for long runs
-  
+  use_log <- gen_range[2] > 1e5
+
   if (use_log) {
-    # Build nice log10 breaks within data range
     log_lo <- floor(log10(max(gen_range[1], 1)))
     log_hi <- ceiling(log10(gen_range[2]))
     log_breaks <- 10^seq(log_lo, log_hi)
@@ -2107,25 +2135,50 @@ fig_strategy_evolution <- function(es_data = NULL, model_name = "acute",
       limits = tax$lims, breaks = tax$breaks, labels = tax$labels
     )
   }
-  
-  p_bS <- ggplot(thin, aes(gen, bS)) +
-    geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
-    log_x + labs(x = "Generation", y = "Host intercept") + mytheme
-  
-  p_mS <- ggplot(thin, aes(gen, mS)) +
-    geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
-    log_x + labs(x = "Generation", y = "Host slope") + mytheme
-  
-  p_bV <- ggplot(thin, aes(gen, bV)) +
-    geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
-    log_x + labs(x = "Generation", y = "Pathogen intercept") + mytheme
-  
-  p_mV <- ggplot(thin, aes(gen, mV)) +
-    geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
-    geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
-    log_x + labs(x = "Generation", y = "Pathogen slope") + mytheme
-  
+
+  if (has_reps && "rep" %in% names(thin)) {
+    n_reps <- length(unique(thin$rep))
+    lw <- if (n_reps <= 3) 0.4 else 0.3
+    al <- if (n_reps <= 3) 0.7 else 0.5
+    rep_scale <- scale_color_manual(values = REP_COLORS, guide = "none")
+
+    p_bS <- ggplot(thin, aes(gen, bS, color = factor(rep), group = rep)) +
+      geom_line(linewidth = lw, alpha = al) + rep_scale +
+      log_x + labs(x = "Generation", y = "Host intercept") + mytheme
+
+    p_mS <- ggplot(thin, aes(gen, mS, color = factor(rep), group = rep)) +
+      geom_line(linewidth = lw, alpha = al) + rep_scale +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+      log_x + labs(x = "Generation", y = "Host slope") + mytheme
+
+    p_bV <- ggplot(thin, aes(gen, bV, color = factor(rep), group = rep)) +
+      geom_line(linewidth = lw, alpha = al) + rep_scale +
+      log_x + labs(x = "Generation", y = "Pathogen intercept") + mytheme
+
+    p_mV <- ggplot(thin, aes(gen, mV, color = factor(rep), group = rep)) +
+      geom_line(linewidth = lw, alpha = al) + rep_scale +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+      log_x + labs(x = "Generation", y = "Pathogen slope") + mytheme
+  } else {
+    p_bS <- ggplot(thin, aes(gen, bS)) +
+      geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
+      log_x + labs(x = "Generation", y = "Host intercept") + mytheme
+
+    p_mS <- ggplot(thin, aes(gen, mS)) +
+      geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+      log_x + labs(x = "Generation", y = "Host slope") + mytheme
+
+    p_bV <- ggplot(thin, aes(gen, bV)) +
+      geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
+      log_x + labs(x = "Generation", y = "Pathogen intercept") + mytheme
+
+    p_mV <- ggplot(thin, aes(gen, mV)) +
+      geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
+      geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+      log_x + labs(x = "Generation", y = "Pathogen slope") + mytheme
+  }
+
   combined <- (p_bS | p_mS) / (p_bV | p_mV) +
     plot_annotation(tag_levels = "A") &
     theme(plot.tag = element_text(face = "bold", size = 16))
@@ -2426,6 +2479,12 @@ load_replicates <- function(model_name, sigma = 0.1, diploid = NULL,
     row <- sub[i, ]
     df <- read_csv(row$csv, show_col_types = FALSE)
 
+    # Skip empty or malformed CSVs
+    if (nrow(df) == 0 || !"event" %in% names(df)) {
+      warning("Skipping empty/malformed CSV: ", row$csv)
+      return(NULL)
+    }
+
     # Extract rep number: prefer config rep field, else parse from tag suffix
     if (!is.na(row$rep)) {
       rep_val <- as.integer(row$rep)
@@ -2570,9 +2629,9 @@ fig_replicate_density <- function(model_name = "taylor",
           strip.text = element_text(face = "bold"))
   
   rep_cols <- c("0" = "#2D3748", "1" = "#1B9E77", "2" = "#D95F02",
-                "3" = "#7570B3", "4" = "#E7298A", "5" = "#66A61E",
+                "3" = "#7570B3", "4" = "#E7298A", "5" = "#1F78B4",
                 "6" = "#E6AB02", "7" = "#A6761D", "8" = "#666666",
-                "9" = "#1F78B4")
+                "9" = "#66A61E")
   p <- p + scale_fill_manual(values = rep_cols, na.value = "#999999")
   
   if (is.null(filename)) {
@@ -3985,6 +4044,7 @@ fig_landscape(model_name = "chronic", filename = "Fitness_landscapes_chronic")
 fig_strategy_panels(model_name = "acute",   filename = "Strategies_acute")
 fig_strategy_panels(model_name = "minimal", filename = "Strategies_minimal")
 fig_strategy_panels(model_name = "taylor",  filename = "Strategies_taylor")
+fig_strategy_panels(model_name = "chronic", filename = "Strategies_chronic")
 
 #SIMULATION PLOTS#
 
@@ -3995,28 +4055,13 @@ list_experiments()
 # Max_pts will thin the data
 # there is step and smoothing functions too but they do not work well right now
 
-fig_timeseries("acute", "Time_series_acute", diploid = TRUE, max_pts = 100,
-               sigma = 0.1, width = 9, height = 10) 
-
-fig_timeseries("minimal", "Time_series_minimal", diploid = TRUE, max_pts = 100, 
-               sigma = 0.1, width = 9, height = 10)
-
-fig_timeseries("taylor", "Time_series_taylor", diploid = TRUE, max_pts = 100,
-               sigma = 0.1, width = 9, height = 10)
-
-fig_timeseries("taylor", "Time_series_taylor_not_thinned", diploid = TRUE, max_pts = Inf,
-               sigma = 0.1, width = 9, height = 10)
-
-fig_timeseries("chronic", "Time_series_chronic", diploid = TRUE, max_pts = 100,
-               sigma = 0.1, width = 9, height = 10, tag_filter = "v3")
-
 # Single replicate (backward compatible)
 fig_timeseries("minimal", "Time_series_minimal_sigma0.01", diploid = TRUE, max_pts = 100,
                sigma = 0.01, width = 9, height = 10, tag_filter = "final_r1")
 
 # Replicate overlay: loads final_r1, final_r2, final_r3 and overlays colored lines
 fig_timeseries("minimal", "Time_series_minimal_sigma0.01_reps", diploid = TRUE, max_pts = 100,
-               sigma = 0.01, width = 9, height = 10, tag_prefix = "final_r")
+               sigma = 0.01, width = 9, height = 10, tag_prefix = "final")
 
 # Specific variants
 # Works even if only some conditions exist for that variant
@@ -4037,119 +4082,61 @@ fig_pinned_comparison("acute", diploid = TRUE, sigma = 0.1,
 # Nash violation map — shows where in trait space the Nash condition is violated, 
 # colored by magnitude of violation. Useful for understanding the geometry of the 
 #landscape and why certain strategies are stable or not.
-
-fig_nash_violation_map(model_name = "acute", diploid = T, resolution = 100,
-                       width = 7, height = 5, 
-                       filename = "Nash_violation_map_acute")
-
 fig_nash_violation_map(model_name = "minimal", diploid = T, resolution = 100,
-                       width = 7, height = 5, 
-                       filename = "Nash_violation_map_minimal")
-
-fig_nash_violation_map(model_name = "taylor", diploid = T, resolution = 100,
-                       width = 7, height = 5, 
-                       filename = "Nash_violation_map_taylor")
-
+                       width = 7, height = 5, sigma = 0.01, tag_prefix = "final",
+                       filename = "Nash_violation_map_minimal_final")
 
 # Snapshots of evolutionary trajectories in trait space, colored by time, with Nash
-fig_snapshots(model_name = "acute", condition = "ERhost_ERpath", n_panels = 6, 
-              diploid = TRUE, sigma = 0.1, width = 7, height = 5, 
-              filename = "ER-ER_Snapshots_acute")
+fig_snapshots(model_name = "minimal", diploid = TRUE, sigma = 0.01, tag_filter= "final_r2",
+              width = 8, height = 6, filename = "ER-ER_strategy_snapshots_minimal")
 
-fig_snapshots(model_name = "minimal", condition = "ERhost_ERpath", n_panels = 6, 
-              diploid = TRUE, sigma = 0.1, width = 7, height = 5, 
-              filename = "ER-ER_Snapshots_minimal")
+# Hexbin of strategy points across the entire time series, with Nash equilibrium marked, 
+#nfaceted by condition. This shows the overall distribution of strategies explored over time 
+# and how it relates to the Nash equilibrium under different conditions.
+fig_hex_combined(models = "minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final",
+                 width = 8, height = 4, filename = "ER-ER_strategy_points_minimal") 
 
-fig_snapshots(model_name = "taylor", condition = "ERhost_ERpath", n_panels = 6, 
-              diploid = TRUE, sigma = 0.1, width = 7, height = 5, 
-              filename = "ER-ER_Snapshots_taylor")
-
-
-# Combined hexbin of all trajectories in trait space, colored by time, with Nash
-fig_hex_combined(models = "acute", diploid = TRUE, sigma = 0.1, 
-                 width = 8, height = 4, 
-                 filename = "ER-ER_strategy_points_acute") 
-
-fig_hex_combined(models = "minimal", diploid = TRUE, sigma = 0.1, 
-                 width = 8, height = 4, 
-                 filename = "ER-ER_strategy_points_minimal") 
-
-fig_hex_combined(models = "taylor", diploid = TRUE, sigma = 0.1, 
-                 width = 8, height = 4, 
-                 filename = "ER-ER_strategy_points_taylor") 
 
 # Evolution of strategies over time, with Nash equilibrium marked, faceted by condition
-fig_strategy_evolution(model_name = "acute", diploid = TRUE, sigma = 0.1, 
-                       width = 8, height = 6, 
-                       filename = "ER-ER_strategy_evolution_acute")
-
-fig_strategy_evolution(model_name = "minimal", diploid = TRUE, sigma = 0.1, 
-                       width = 8, height = 6, 
+fig_strategy_evolution(model_name = "minimal", diploid = TRUE, sigma = 0.01, 
+                       tag_prefix = "final", width = 8, height = 6, 
                        filename = "ER-ER_strategy_evolution_minimal")
 
-fig_strategy_evolution(model_name = "taylor", diploid = TRUE, sigma = 0.1, 
-                       width = 8, height = 6, 
-                       filename = "ER-ER_strategy_evolution_taylor")
 
 # Distribution of spectral slopes in the time series, which can indicate stability 
 #and memory effects.
-fig_slope_distribution(model_name = "acute", diploid = TRUE, sigma = 0.1, 
-                       width = 6, height = 5, 
-                       filename = "ER-ER_stability_acute")  
 
-fig_slope_distribution(model_name = "minimal", diploid = TRUE, sigma = 0.1, 
-                       width = 6, height = 5, 
+fig_slope_distribution(model_name = "minimal", diploid = TRUE, sigma = 0.01, 
+                       tag_prefix = "final", width = 6, height = 5, 
                        filename = "ER-ER_stability_minimal")  
-
-fig_slope_distribution(model_name = "taylor", diploid = TRUE, sigma = 0.1, 
-                       width = 6, height = 5, 
-                       filename = "ER-ER_stability_taylor")  
-
 
 # Other TS stat, diagnostic figures: 
 # CV of traits in sliding windows, spectral slope distribution, correlation length
-fig_ts_stats("acute", diploid = TRUE, sigma = 0.1, filename = "TS_stats_acute")
-fig_ts_stats("minimal", diploid = TRUE, sigma = 0.1, filename = "TS_stats_minimal")
-fig_ts_stats("taylor", diploid = TRUE, sigma = 0.1, filename = "TS_stats_taylor")
+fig_ts_stats("minimal", diploid = TRUE, sigma = 0.01,tag_prefix = "final", filename = "TS_stats_minimal")
 
 # Step size distribution across conditions, which can indicate how the effective mutation
-
-fig_step_sizes("acute", diploid = TRUE, sigma = 0.1, filename = "Realized_step_sizes_acute")
-fig_step_sizes("minimal", diploid = TRUE, sigma = 0.1, filename = "Realized_step_sizes_minimal")
-fig_step_sizes("taylor", diploid = TRUE, sigma = 0.1, filename = "Realized_step_sizes_taylor")
+fig_step_sizes("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Realized_step_sizes_minimal")
 
 # Neutral drift analysis: fraction of mutations that are effectively neutral, and the
 # distribution of their decoupling ratios (genotype vs phenotype change), which can
 # indicate how much of the evolutionary dynamics is driven by drift vs selection, and
 # how much genotypic change is decoupled from phenotypic change.
-fig_neutral_drift("acute", diploid = TRUE, sigma = 0.1, filename = "Neutral_drift_acute")
-fig_neutral_drift("minimal", diploid = TRUE, sigma = 0.1, filename = "Neutral_drift_minimal")
-fig_neutral_drift("taylor", diploid = TRUE, sigma = 0.1, filename = "Neutral_drift_taylor")
+fig_neutral_drift("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Neutral_drift_minimal")
 
 # Dwell time distributions in different regions of trait space (near Nash, stable
 # regions, boundaries), which can indicate how long populations tend to stay in these
 # regions and how that differs across conditions.
-fig_dwell_times("acute", region = "nash", diploid = TRUE, filename = "Dwell_nash_acute")
-fig_dwell_times("acute", region = "stable", diploid = TRUE, filename = "Dwell_stable_acute")
-fig_dwell_times("acute", region = "boundary", diploid = TRUE, filename = "Dwell_boundary_acute")
-
-fig_dwell_times("minimal", region = "nash", diploid = TRUE, filename = "Dwell_nash_minimal")
-fig_dwell_times("minimal", region = "stable", diploid = TRUE, filename = "Dwell_stable_minimal")
-fig_dwell_times("minimal", region = "boundary", diploid = TRUE, filename = "Dwell_boundary_minimal")
-
-fig_dwell_times("taylor", region = "nash", diploid = TRUE, filename = "Dwell_nash_taylor")
-fig_dwell_times("taylor", region = "stable", diploid = TRUE, filename = "Dwell_stable_taylor")
-fig_dwell_times("taylor", region = "boundary", diploid = TRUE, filename = "Dwell_boundary_taylor")
+fig_dwell_times("minimal", region = "nash", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Dwell_nash_minimal")
+fig_dwell_times("minimal", region = "stable", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Dwell_stable_minimal")
+fig_dwell_times("minimal", region = "boundary", diploid = TRUE, , sigma = 0.01, tag_prefix = "final", filename = "Dwell_boundary_minimal")
 
 # Trait density distributions across conditions, with Nash equilibrium marked, which can
 # indicate how the population is distributed in trait space and how close it is to the Nash
 # equilibrium under different conditions.
-fig_trait_density("acute", sigma = 0.1, diploid = TRUE, filename = "Trait_density_acute")
-fig_trait_density("minimal", sigma = 0.1, diploid = TRUE, filename = "Trait_density_minimal")
-fig_trait_density("taylor", sigma = 0.1, diploid = TRUE, filename = "Trait_density_taylor")
+fig_trait_density("minimal", sigma = 0.01, tag_prefix = "final", diploid = TRUE, filename = "Trait_density_minimal")
 
 # Boundary occupancy: fraction of time spent at trait-space boundaries, which can indicate
 # how much the population is pushed against the limits of trait space under different conditions.
-fig_boundary_occupancy("acute", sigma = 0.1, diploid = TRUE, filename = "Boundary_occupancy_acute")
-fig_boundary_occupancy("minimal", sigma = 0.1, diploid = TRUE, filename = "Boundary_occupancy_minimal")
-fig_boundary_occupancy("taylor", sigma = 0.1, diploid = TRUE, filename = "Boundary_occupancy_taylor")
+fig_boundary_occupancy("minimal", sigma = 0.01, tag_prefix = "final", diploid = TRUE, filename = "Boundary_occupancy_minimal")
+
+
