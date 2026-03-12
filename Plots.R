@@ -2124,47 +2124,64 @@ fig_strategy_evolution <- function(es_data = NULL, model_name = "acute",
     )
   }
 
+  # Shared y-axis ranges across rows: intercepts share limits, slopes share limits
+  bS_rng <- range(thin$bS, na.rm = TRUE)
+  bV_rng <- range(thin$bV, na.rm = TRUE)
+  b_lims <- range(c(bS_rng, bV_rng))
+  b_pad  <- diff(b_lims) * 0.05
+  b_lims <- b_lims + c(-b_pad, b_pad)
+
+  mS_rng <- range(thin$mS, na.rm = TRUE)
+  mV_rng <- range(thin$mV, na.rm = TRUE)
+  m_lims <- range(c(mS_rng, mV_rng))
+  m_pad  <- diff(m_lims) * 0.05
+  m_lims <- m_lims + c(-m_pad, m_pad)
+
+  # Theme: no x-axis for top row
+  top_theme <- mytheme +
+    theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
   if (has_reps && "rep" %in% names(thin)) {
     n_reps <- length(unique(thin$rep))
     lw <- if (n_reps <= 3) 0.4 else 0.3
     al <- if (n_reps <= 3) 0.7 else 0.5
     rep_scale <- scale_color_manual(values = REP_COLORS, guide = "none")
 
-    p_bS <- ggplot(thin, aes(gen, bS, color = factor(rep), group = rep)) +
+    p_bS <- ggplot(thin, aes(gen, bS, color = factor(rep, levels = names(REP_COLORS)), group = rep)) +
       geom_line(linewidth = lw, alpha = al) + rep_scale +
-      log_x + labs(x = "Generation", y = "Host intercept") + mytheme
+      log_x + ylim(b_lims) + labs(x = NULL, y = "Host intercept") + top_theme
 
-    p_mS <- ggplot(thin, aes(gen, mS, color = factor(rep), group = rep)) +
+    p_mS <- ggplot(thin, aes(gen, mS, color = factor(rep, levels = names(REP_COLORS)), group = rep)) +
       geom_line(linewidth = lw, alpha = al) + rep_scale +
       geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
-      log_x + labs(x = "Generation", y = "Host slope") + mytheme
+      log_x + ylim(m_lims) + labs(x = NULL, y = "Host slope") + top_theme
 
-    p_bV <- ggplot(thin, aes(gen, bV, color = factor(rep), group = rep)) +
+    p_bV <- ggplot(thin, aes(gen, bV, color = factor(rep, levels = names(REP_COLORS)), group = rep)) +
       geom_line(linewidth = lw, alpha = al) + rep_scale +
-      log_x + labs(x = "Generation", y = "Pathogen intercept") + mytheme
+      log_x + ylim(b_lims) + labs(x = "Generation", y = "Pathogen intercept") + mytheme
 
-    p_mV <- ggplot(thin, aes(gen, mV, color = factor(rep), group = rep)) +
+    p_mV <- ggplot(thin, aes(gen, mV, color = factor(rep, levels = names(REP_COLORS)), group = rep)) +
       geom_line(linewidth = lw, alpha = al) + rep_scale +
       geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
-      log_x + labs(x = "Generation", y = "Pathogen slope") + mytheme
+      log_x + ylim(m_lims) + labs(x = "Generation", y = "Pathogen slope") + mytheme
   } else {
     p_bS <- ggplot(thin, aes(gen, bS)) +
       geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
-      log_x + labs(x = "Generation", y = "Host intercept") + mytheme
+      log_x + ylim(b_lims) + labs(x = NULL, y = "Host intercept") + top_theme
 
     p_mS <- ggplot(thin, aes(gen, mS)) +
       geom_line(color = "steelblue", alpha = 0.7, linewidth = 0.5) +
       geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
-      log_x + labs(x = "Generation", y = "Host slope") + mytheme
+      log_x + ylim(m_lims) + labs(x = NULL, y = "Host slope") + top_theme
 
     p_bV <- ggplot(thin, aes(gen, bV)) +
       geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
-      log_x + labs(x = "Generation", y = "Pathogen intercept") + mytheme
+      log_x + ylim(b_lims) + labs(x = "Generation", y = "Pathogen intercept") + mytheme
 
     p_mV <- ggplot(thin, aes(gen, mV)) +
       geom_line(color = "lightcoral", alpha = 0.7, linewidth = 0.5) +
       geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
-      log_x + labs(x = "Generation", y = "Pathogen slope") + mytheme
+      log_x + ylim(m_lims) + labs(x = "Generation", y = "Pathogen slope") + mytheme
   }
 
   combined <- (p_bS | p_mS) / (p_bV | p_mV) +
@@ -2897,7 +2914,7 @@ fig_step_sizes <- function(model_name = "acute",
     geom_violin(alpha = 0.5, scale = "width") +
     geom_boxplot(width = 0.12, outlier.size = 0.3, alpha = 0.8) +
     facet_wrap(~ trait, scales = "free_y") +
-    scale_y_log10() +
+    scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
     scale_fill_condition() +
     labs(x = NULL, y = "Step size (log scale)",
          title = paste0(model_name, " — mutational step sizes")) +
@@ -3121,6 +3138,72 @@ fig_dwell_times <- function(model_name = "acute",
   
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 7
+    h <- if (!is.null(height)) height else 5
+    ggsave(paste0("figures/", filename, ".pdf"), p, width = w, height = h)
+    ggsave(paste0("figures/", filename, ".png"), p, width = w, height = h)
+    cat("Saved:", filename, "\n")
+  }
+  p
+}
+
+
+#' Figure: Omega (substitution rate) distributions per condition
+#' Violin/boxplots of omega_P and omega_H (log scale) with reference line
+#' at omega = 1 separating purifying from positive selection.
+#' Panels labelled by trait: Clearance (c) and Virulence (v).
+fig_omega <- function(model_name = "acute",
+                      sigma = 0.1, diploid = NULL,
+                      include_pinned = FALSE,
+                      width = NULL, height = NULL,
+                      filename = "Figure_omega",
+                      tag_filter = NA, tag_prefix = NULL) {
+
+  all_df <- load_all_conditions(model_name, sigma, diploid, include_pinned,
+                                tag_filter = tag_filter, tag_prefix = tag_prefix)
+  if (nrow(all_df) == 0) {
+    warning("No data found"); return(invisible(NULL))
+  }
+
+  grp_cols <- "scenario"
+  if (is.null(sigma)) grp_cols <- c(grp_cols, "sigma_label")
+  if (include_pinned) grp_cols <- c(grp_cols, "run_type")
+
+  omega_df <- all_df %>%
+    mutate(
+      omegaPath = suppressWarnings(as.numeric(omegaPath)),
+      omegaHost = suppressWarnings(as.numeric(omegaHost))
+    ) %>%
+    select(all_of(grp_cols), omegaPath, omegaHost) %>%
+    pivot_longer(c(omegaPath, omegaHost),
+                 names_to = "player", values_to = "omega") %>%
+    filter(!is.na(omega), omega > 0) %>%
+    mutate(player = ifelse(player == "omegaPath",
+                           "Virulence (v)", "Clearance (c)"))
+
+  if (include_pinned) {
+    omega_df <- omega_df %>%
+      mutate(x_label = factor(paste0(scenario, "\n", run_type),
+                              levels = unique(paste0(scenario, "\n", run_type))))
+  } else {
+    omega_df <- omega_df %>% mutate(x_label = scenario)
+  }
+
+  p <- ggplot(omega_df, aes(x = x_label, y = omega, fill = scenario)) +
+    geom_violin(alpha = 0.5, scale = "width") +
+    geom_boxplot(width = 0.12, outlier.size = 0.3, alpha = 0.8) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "gray40") +
+    facet_wrap(~ player) +
+    scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
+    scale_fill_condition() +
+    labs(x = NULL, y = expression(omega ~ "(log scale)"),
+         title = paste0(model_name, " — substitution rate distributions")) +
+    mytheme +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1),
+          legend.position = "none",
+          strip.text = element_text(size = 12))
+
+  if (!is.null(filename)) {
+    w <- if (!is.null(width)) width else 8
     h <- if (!is.null(height)) height else 5
     ggsave(paste0("figures/", filename, ".pdf"), p, width = w, height = h)
     ggsave(paste0("figures/", filename, ".png"), p, width = w, height = h)
@@ -4075,7 +4158,7 @@ fig_nash_violation_map(model_name = "minimal", diploid = T, resolution = 100,
                        filename = "Nash_violation_map_minimal_final")
 
 # Snapshots of evolutionary trajectories in trait space, colored by time, with Nash
-fig_snapshots(model_name = "minimal", diploid = TRUE, sigma = 0.01, tag_filter= "final_r2",
+fig_snapshots(model_name = "minimal", diploid = TRUE, sigma = 0.01, tag_filter= "final_r0",
               width = 8, height = 6, filename = "ER-ER_strategy_snapshots_minimal")
 
 # Hexbin of strategy points across the entire time series, with Nash equilibrium marked, 
@@ -4101,6 +4184,7 @@ fig_slope_distribution(model_name = "minimal", diploid = TRUE, sigma = 0.01,
 # Other TS stat, diagnostic figures: 
 # CV of traits in sliding windows, spectral slope distribution, correlation length
 fig_ts_stats("minimal", diploid = TRUE, sigma = 0.01,tag_prefix = "final", filename = "TS_stats_minimal")
+fig_ts_stats("minimal", diploid = TRUE, sigma = 0.01,tag_prefix = "final", filename = "TS_stats_minimal", window = 20, step = 5)
 
 # Step size distribution across conditions, which can indicate how the effective mutation
 fig_step_sizes("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Realized_step_sizes_minimal")
@@ -4117,6 +4201,10 @@ fig_neutral_drift("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final",
 fig_dwell_times("minimal", region = "nash", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Dwell_nash_minimal")
 fig_dwell_times("minimal", region = "stable", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Dwell_stable_minimal")
 fig_dwell_times("minimal", region = "boundary", diploid = TRUE, , sigma = 0.01, tag_prefix = "final", filename = "Dwell_boundary_minimal")
+
+# Combined omega distributions + dwell times near Nash: shows selection regime
+# (purifying vs positive) alongside equilibrium residence patterns.
+fig_omega("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Omega_minimal")
 
 # Trait density distributions across conditions, with Nash equilibrium marked, which can
 # indicate how the population is distributed in trait space and how close it is to the Nash
