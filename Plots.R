@@ -4127,11 +4127,11 @@ list_experiments()
 # there is step and smoothing functions too but they do not work well right now
 
 # Single replicate (backward compatible)
-fig_timeseries("minimal", "Time_series_minimal_sigma0.01", diploid = TRUE, max_pts = 100,
+fig_timeseries("minimal", "Time_series_minimal", diploid = TRUE, max_pts = 100,
                sigma = 0.01, width = 9, height = 10, tag_filter = "final_r1")
 
 # Replicate overlay: loads final_r1, final_r2, final_r3 and overlays colored lines
-fig_timeseries("minimal", "Time_series_minimal_sigma0.01_reps", diploid = TRUE, max_pts = Inf,
+fig_timeseries("minimal", "Time_series_minimal_100K", diploid = TRUE, max_pts = 100,
                sigma = 0.01, width = 9, height = 10, tag_prefix = "final")
 
 # Specific variants
@@ -4155,23 +4155,23 @@ fig_pinned_comparison("acute", diploid = TRUE, sigma = 0.1,
 #landscape and why certain strategies are stable or not.
 fig_nash_violation_map(model_name = "minimal", diploid = T, resolution = 100,
                        width = 7, height = 5, sigma = 0.01, tag_prefix = "final",
-                       filename = "Nash_violation_map_minimal_final")
+                       filename = "Nash_violation_map_minimal_final_100K")
 
 # Snapshots of evolutionary trajectories in trait space, colored by time, with Nash
-fig_snapshots(model_name = "minimal", diploid = TRUE, sigma = 0.01, tag_filter= "final_r0",
-              width = 8, height = 6, filename = "ER-ER_strategy_snapshots_minimal")
+fig_snapshots(model_name = "minimal", diploid = TRUE, sigma = 0.01, tag_filter= "final_r1",
+              width = 8, height = 6, filename = "ER-ER_strategy_snapshots_minimal_100K")
 
 # Hexbin of strategy points across the entire time series, with Nash equilibrium marked, 
 #nfaceted by condition. This shows the overall distribution of strategies explored over time 
 # and how it relates to the Nash equilibrium under different conditions.
 fig_hex_combined(models = "minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final",
-                 width = 8, height = 4, filename = "ER-ER_strategy_points_minimal") 
+                 width = 8, height = 4, filename = "ER-ER_strategy_points_minimal_100K") 
 
 
 # Evolution of strategies over time, with Nash equilibrium marked, faceted by condition
 fig_strategy_evolution(model_name = "minimal", diploid = TRUE, sigma = 0.01, 
                        tag_prefix = "final", width = 8, height = 6, 
-                       filename = "ER-ER_strategy_evolution_minimal")
+                       filename = "ER-ER_strategy_evolution_minimal_100K")
 
 
 # Distribution of spectral slopes in the time series, which can indicate stability 
@@ -4179,40 +4179,270 @@ fig_strategy_evolution(model_name = "minimal", diploid = TRUE, sigma = 0.01,
 
 fig_slope_distribution(model_name = "minimal", diploid = TRUE, sigma = 0.01, 
                        tag_prefix = "final", width = 6, height = 5, 
-                       filename = "ER-ER_stability_minimal")  
+                       filename = "ER-ER_stability_minimal_100K")  
 
 # Other TS stat, diagnostic figures: 
 # CV of traits in sliding windows, spectral slope distribution, correlation length
-fig_ts_stats("minimal", diploid = TRUE, sigma = 0.01,tag_prefix = "final", filename = "TS_stats_minimal")
+fig_ts_stats("minimal", diploid = TRUE, sigma = 0.01,tag_prefix = "final", filename = "TS_stats_minimal_100K")
 fig_ts_stats("minimal", diploid = TRUE, sigma = 0.01,tag_prefix = "final", filename = "TS_stats_minimal", window = 20, step = 5)
 
 # Step size distribution across conditions, which can indicate how the effective mutation
-fig_step_sizes("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Realized_step_sizes_minimal")
+fig_step_sizes("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Realized_step_sizes_minimal_100K")
 
 # Neutral drift analysis: fraction of mutations that are effectively neutral, and the
 # distribution of their decoupling ratios (genotype vs phenotype change), which can
 # indicate how much of the evolutionary dynamics is driven by drift vs selection, and
 # how much genotypic change is decoupled from phenotypic change.
-fig_neutral_drift("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Neutral_drift_minimal")
+fig_neutral_drift("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Neutral_drift_minimal_100K")
 
 # Dwell time distributions in different regions of trait space (near Nash, stable
 # regions, boundaries), which can indicate how long populations tend to stay in these
 # regions and how that differs across conditions.
-fig_dwell_times("minimal", region = "nash", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Dwell_nash_minimal")
-fig_dwell_times("minimal", region = "stable", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Dwell_stable_minimal")
-fig_dwell_times("minimal", region = "boundary", diploid = TRUE, , sigma = 0.01, tag_prefix = "final", filename = "Dwell_boundary_minimal")
+fig_dwell_times("minimal", region = "nash", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Dwell_nash_minimal_100K")
+fig_dwell_times("minimal", region = "stable", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Dwell_stable_minimal_100K")
+fig_dwell_times("minimal", region = "boundary", diploid = TRUE, , sigma = 0.01, tag_prefix = "final", filename = "Dwell_boundary_minimal_100K")
 
 # Combined omega distributions + dwell times near Nash: shows selection regime
 # (purifying vs positive) alongside equilibrium residence patterns.
-fig_omega("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Omega_minimal")
+fig_omega("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Omega_minimal_100K")
 
 # Trait density distributions across conditions, with Nash equilibrium marked, which can
 # indicate how the population is distributed in trait space and how close it is to the Nash
 # equilibrium under different conditions.
-fig_trait_density("minimal", sigma = 0.01, tag_prefix = "final", diploid = TRUE, filename = "Trait_density_minimal")
+fig_trait_density("minimal", sigma = 0.01, tag_prefix = "final", diploid = TRUE, filename = "Trait_density_minimal_100K")
 
 # Boundary occupancy: fraction of time spent at trait-space boundaries, which can indicate
 # how much the population is pushed against the limits of trait space under different conditions.
-fig_boundary_occupancy("minimal", sigma = 0.01, tag_prefix = "final", diploid = TRUE, filename = "Boundary_occupancy_minimal")
+fig_boundary_occupancy("minimal", sigma = 0.01, tag_prefix = "final", diploid = TRUE, filename = "Boundary_occupancy_minimal_100K")
 
+
+#!/usr/bin/env Rscript
+# ============================================================================
+# compute_manuscript_numbers.R
+# 
+# Computes all placeholder values (X%) and summary statistics for the
+# minimal model manuscript. Run from the GoldsteinGameTheory root directory:
+#
+#   Rscript compute_manuscript_numbers.R
+#
+# Requires: Plots.R (sourced for data-loading infrastructure)
+# ============================================================================
+
+suppressPackageStartupMessages({
+  library(dplyr)
+  library(tidyr)
+})
+
+# --- Configuration -----------------------------------------------------------
+MODEL       <- "minimal"
+SIGMA       <- 0.01
+DIPLOID     <- TRUE
+TAG_PREFIX  <- "final"        # matches final_r0, final_r1, final_r2
+BND_THRESH  <- 0.02           # boundary = within 2% of domain edge
+
+# --- Load all conditions (pooled replicates) --------------------------------
+all_df <- load_all_conditions(MODEL, sigma = SIGMA, diploid = DIPLOID,
+                              tag_prefix = TAG_PREFIX)
+
+if (nrow(all_df) == 0) stop("No data loaded. Check results directory.")
+
+# Keep only post-burn-in events
+post <- all_df %>% filter(event == "post")
+
+cat("Loaded", nrow(post), "post-burn-in events across",
+    length(unique(post$scenario)), "scenarios\n")
+if ("rep" %in% names(post)) {
+  cat("Replicates per scenario:\n")
+  post %>% count(scenario, rep) %>% count(scenario, name = "n_reps") %>%
+    { for (i in seq_len(nrow(.))) cat("  ", as.character(.$scenario[i]),
+                                      ":", .$n_reps[i], "\n") }
+}
+
+# --- 1. Boundary occupancy (the X% values) ----------------------------------
+cat("\n--- BOUNDARY OCCUPANCY ---\n")
+cat("(threshold:", BND_THRESH, "= traits within", BND_THRESH, "of 0 or 1)\n\n")
+
+dom <- c(0, 1)  # minimal model domain
+lo <- dom[1] + BND_THRESH
+hi <- dom[2] - BND_THRESH
+
+bnd <- post %>%
+  group_by(scenario) %>%
+  summarise(
+    n            = n(),
+    c_at_bnd_pct = 100 * mean(s < lo | s > hi),
+    v_at_bnd_pct = 100 * mean(v < lo | v > hi),
+    any_bnd_pct  = 100 * mean((s < lo | s > hi) | (v < lo | v > hi)),
+    c_lower_pct  = 100 * mean(s < lo),
+    c_upper_pct  = 100 * mean(s > hi),
+    v_lower_pct  = 100 * mean(v < lo),
+    v_upper_pct  = 100 * mean(v > hi),
+    .groups = "drop"
+  )
+
+for (i in seq_len(nrow(bnd))) {
+  cat(sprintf("  %s (n=%d):\n", bnd$scenario[i], bnd$n[i]))
+  cat(sprintf("    clearance c at boundary: %.1f%%  (lower: %.1f%%, upper: %.1f%%)\n",
+              bnd$c_at_bnd_pct[i], bnd$c_lower_pct[i], bnd$c_upper_pct[i]))
+  cat(sprintf("    virulence v at boundary: %.1f%%  (lower: %.1f%%, upper: %.1f%%)\n",
+              bnd$v_at_bnd_pct[i], bnd$v_lower_pct[i], bnd$v_upper_pct[i]))
+  cat(sprintf("    either at boundary:      %.1f%%\n\n",
+              bnd$any_bnd_pct[i]))
+}
+
+# --- 2. Mean traits and fitness ----------------------------------------------
+cat("--- MEAN TRAITS & FITNESS ---\n\n")
+
+trait_summary <- post %>%
+  group_by(scenario) %>%
+  summarise(
+    mean_v      = mean(v, na.rm = TRUE),
+    sd_v        = sd(v, na.rm = TRUE),
+    mean_c      = mean(s, na.rm = TRUE),   # 's' column = clearance
+    sd_c        = sd(s, na.rm = TRUE),
+    mean_W_H    = mean(hostFit, na.rm = TRUE),
+    sd_W_H      = sd(hostFit, na.rm = TRUE),
+    mean_W_P    = mean(pathFit, na.rm = TRUE),
+    sd_W_P      = sd(pathFit, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+for (i in seq_len(nrow(trait_summary))) {
+  r <- trait_summary[i, ]
+  cat(sprintf("  %s:\n", r$scenario))
+  cat(sprintf("    v = %.3f ± %.3f    c = %.3f ± %.3f\n",
+              r$mean_v, r$sd_v, r$mean_c, r$sd_c))
+  cat(sprintf("    W_H = %.4f ± %.4f    W_P = %.4f ± %.4f\n\n",
+              r$mean_W_H, r$sd_W_H, r$mean_W_P, r$sd_W_P))
+}
+
+# --- 3. Omega (normalised substitution rate) ---------------------------------
+cat("--- OMEGA (normalised substitution rate) ---\n\n")
+
+omega_summary <- post %>%
+  mutate(
+    omH = suppressWarnings(as.numeric(omegaHost)),
+    omP = suppressWarnings(as.numeric(omegaPath))
+  ) %>%
+  filter(!is.na(omH), !is.na(omP)) %>%
+  group_by(scenario) %>%
+  summarise(
+    median_omega_H = median(omH),
+    median_omega_P = median(omP),
+    mean_omega_H   = mean(omH),
+    mean_omega_P   = mean(omP),
+    min_omega_H    = min(omH),
+    max_omega_H    = max(omH),
+    min_omega_P    = min(omP),
+    max_omega_P    = max(omP),
+    pct_omH_gt1    = 100 * mean(omH > 1),
+    pct_omP_gt1    = 100 * mean(omP > 1),
+    .groups = "drop"
+  )
+
+for (i in seq_len(nrow(omega_summary))) {
+  r <- omega_summary[i, ]
+  cat(sprintf("  %s:\n", r$scenario))
+  cat(sprintf("    ω_H: median=%.2f, mean=%.1f, range=[%.2e, %.2e], >1: %.1f%%\n",
+              r$median_omega_H, r$mean_omega_H, r$min_omega_H, r$max_omega_H,
+              r$pct_omH_gt1))
+  cat(sprintf("    ω_P: median=%.2f, mean=%.1f, range=[%.2e, %.2e], >1: %.1f%%\n\n",
+              r$median_omega_P, r$mean_omega_P, r$min_omega_P, r$max_omega_P,
+              r$pct_omP_gt1))
+}
+
+# --- 4. Dwell times near Nash -----------------------------------------------
+cat("--- DWELL TIMES NEAR NASH ---\n")
+cat("(Nash = (0.5, 0.5); 'near' = within 0.05)\n\n")
+
+NASH_TOL <- 0.05
+
+dwell_summary <- post %>%
+  mutate(
+    dw = suppressWarnings(as.numeric(dwell)),
+    near_nash = abs(v - 0.5) < NASH_TOL & abs(s - 0.5) < NASH_TOL
+  ) %>%
+  filter(!is.na(dw)) %>%
+  group_by(scenario) %>%
+  summarise(
+    median_dwell       = median(dw),
+    mean_dwell         = mean(dw),
+    pct_near_nash      = 100 * mean(near_nash),
+    median_dwell_nash  = median(dw[near_nash], na.rm = TRUE),
+    .groups = "drop"
+  )
+
+for (i in seq_len(nrow(dwell_summary))) {
+  r <- dwell_summary[i, ]
+  cat(sprintf("  %s:\n", r$scenario))
+  cat(sprintf("    median dwell = %.2e,  mean dwell = %.2e\n",
+              r$median_dwell, r$mean_dwell))
+  cat(sprintf("    time near Nash = %.1f%%,  median dwell at Nash = %.2e\n\n",
+              r$pct_near_nash, r$median_dwell_nash))
+}
+
+# --- 5. ER/ER slope stability -----------------------------------------------
+cat("--- ER/ER SLOPE STABILITY ---\n\n")
+
+erer <- post %>%
+  filter(scenario == "ER / ER") %>%
+  mutate(
+    mS_num = suppressWarnings(as.numeric(mS)),
+    mV_num = suppressWarnings(as.numeric(mV))
+  ) %>%
+  filter(!is.na(mS_num), !is.na(mV_num))
+
+if (nrow(erer) > 0) {
+  slope_prod <- abs(erer$mS_num * erer$mV_num)
+  pct_stable <- 100 * mean(slope_prod < 1)
+  cat(sprintf("  |m_c * m_v| < 1 (stable):   %.1f%% of time\n", pct_stable))
+  cat(sprintf("  |m_c * m_v| >= 1 (unstable): %.1f%% of time\n", 100 - pct_stable))
+  cat(sprintf("  median |m_c * m_v| = %.2f\n", median(slope_prod)))
+  cat(sprintf("  mean   |m_c * m_v| = %.2f\n\n", mean(slope_prod)))
+} else {
+  cat("  (no ER/ER data with slope columns)\n\n")
+}
+
+# --- 6. Step-size amplification ----------------------------------------------
+cat("--- STEP-SIZE AMPLIFICATION ---\n\n")
+
+step_summary <- post %>%
+  group_by(scenario) %>%
+  mutate(
+    delta_v = abs(v - lag(v)),
+    delta_c = abs(s - lag(s))
+  ) %>%
+  filter(!is.na(delta_v), !is.na(delta_c)) %>%
+  summarise(
+    median_dv = median(delta_v),
+    median_dc = median(delta_c),
+    mean_dv   = mean(delta_v),
+    mean_dc   = mean(delta_c),
+    .groups = "drop"
+  )
+
+for (i in seq_len(nrow(step_summary))) {
+  r <- step_summary[i, ]
+  cat(sprintf("  %s: median Δv=%.4f, Δc=%.4f  |  mean Δv=%.4f, Δc=%.4f\n",
+              r$scenario, r$median_dv, r$median_dc, r$mean_dv, r$mean_dc))
+}
+
+
+erer_bnd <- bnd %>% filter(scenario == "ER / ER")
+etet_bnd <- bnd %>% filter(scenario == "ET / ET")
+
+if (nrow(erer_bnd) > 0) {
+  cat(sprintf("ER/ER clearance c at boundary: ~%.0f%%\n", erer_bnd$c_at_bnd_pct))
+  cat(sprintf("ER/ER virulence v at boundary: ~%.0f%%\n", erer_bnd$v_at_bnd_pct))
+}
+if (nrow(etet_bnd) > 0) {
+  cat(sprintf("ET/ET any trait at boundary:    ~%.0f%%\n", etet_bnd$any_bnd_pct))
+}
+
+erer_slope <- if (nrow(erer) > 0) {
+  100 * mean(abs(erer$mS_num * erer$mV_num) < 1)
+} else NA
+if (!is.na(erer_slope)) {
+  cat(sprintf("ER/ER stable (|mc*mv|<1):      ~%.0f%%\n", erer_slope))
+}
 
