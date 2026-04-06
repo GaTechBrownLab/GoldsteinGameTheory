@@ -4127,8 +4127,17 @@ list_experiments()
 # there is step and smoothing functions too but they do not work well right now
 
 # Single replicate (backward compatible)
-fig_timeseries("minimal", "Time_series_minimal", diploid = TRUE, max_pts = 100,
+fig_timeseries("minimal", "Time_series_minimal_oldSolver_r1", diploid = TRUE, max_pts = 100,
                sigma = 0.01, width = 9, height = 10, tag_filter = "final_r1")
+
+fig_timeseries("minimal", "Time_series_minimal_simpleSolver_r1", diploid = TRUE, max_pts = 100,
+               sigma = 0.01, width = 9, height = 10, tag_filter = "final_r1_simpleSolver")
+
+fig_timeseries("minimal", "Time_series_minimal_simpleSolver_simpleProposals_r1", diploid = TRUE, max_pts = 100,
+               sigma = 0.01, width = 9, height = 10, tag_filter = "final_r1_simpleSolver_simple_Proposals")
+
+fig_timeseries("minimal", "Time_series_minimal_final_long", diploid = TRUE, max_pts = 100,
+               sigma = 0.01, width = 9, height = 10, tag_filter = "final_long")
 
 # Replicate overlay: loads final_r1, final_r2, final_r3 and overlays colored lines
 fig_timeseries("minimal", "Time_series_minimal_100K", diploid = TRUE, max_pts = 100,
