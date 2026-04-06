@@ -58,7 +58,6 @@ FIX_PATH_TRAIT: Optional[float] = None   # e.g. 0.5 to pin v=0.5
 
 USE_BOUNDED_TRAITS = True
 USE_GAUSSIAN = False
-USE_SIMPLE_PROPOSALS = False  # True: one-at-a-time Gaussian proposals (no grid)
 DIPLOID_KIMURA = False  # True: 4Ns denominator (diploid semi-dominant); False: 2Ns (haploid)
 
 # Model-specific trait domain.  set_fitness_model() adjusts these.
@@ -310,22 +309,8 @@ def set_fitness_model(model: str) -> None:
         TRAIT_MAX = 1.0
 
 # ============================================================
-# ER equilibrium solving — bisection on composed clamped map
+# ER equilibrium solving with clamping
 # ============================================================
-#
-# The realised equilibrium is found by solving a 1D fixed-point equation.
-# Substituting the pathogen's clamped response rule into the host's gives:
-#
-#   s* = clamp(bS + mS * clamp(bV + mV * s*))
-#
-# This is a continuous map from [TRAIT_MIN, TRAIT_MAX] to itself, so by
-# Brouwer's fixed-point theorem at least one solution always exists.
-# We find ALL roots by scanning for sign changes of
-#   g(s) = clamp(bS + mS * clamp(bV + mV * s)) - s
-# on a fine grid, then bisecting each bracket.  This replaces the old
-# iterated-best-response fallback and eliminates the 2-cycle artifact:
-# the "2-cycle" was not a property of the system but of the iterative
-# solver diverging past an unstable (repelling) fixed point.
 
 @dataclass(frozen=True)
 class Equilibrium:
@@ -347,109 +332,23 @@ def _best_equilibrium_for_player(eqs: List[Equilibrium], player: str) -> Optiona
     return max(eqs, key=key)
 
 def _solve_interior(bS: float, mS: float, bV: float, mV: float) -> Optional[Tuple[float, float]]:
-    """Solve unclamped linear system for interior intersection.
-
-    v+ = (bV + mV*bS) / (1 - mS*mV)
-    s+ = (bS + mS*bV) / (1 - mS*mV)
-    Both share the same denominator (1 - mS*mV).
-    """
-    denom = 1.0 - mS * mV
+    denom = (1.0 - mS*mV)
     if abs(denom) < 1e-10:
         return None
-    s = (bS + mS * bV) / denom
-    v = bV + mV * s
+    s = (bS + mS*bV) / denom
+    v = bV + mV*s
     return (v, s)
 
-def _composed_map_residual(s: float, bS: float, mS: float,
-                           bV: float, mV: float) -> float:
-    """g(s) = clamp(bS + mS * clamp(bV + mV * s)) - s
-
-    Fixed points of the composed clamped map satisfy g(s) = 0.
-    """
-    v = clamp01(bV + mV * s)
-    return clamp01(bS + mS * v) - s
-
-def _bisect_root(g, lo: float, hi: float, tol: float = 1e-12,
-                 max_iter: int = 80) -> float:
-    """Bisect to find root of g in [lo, hi], assuming sign change."""
-    g_lo = g(lo)
-    for _ in range(max_iter):
-        mid = (lo + hi) * 0.5
-        g_mid = g(mid)
-        if abs(g_mid) < tol or (hi - lo) < tol:
-            return mid
-        if g_mid * g_lo <= 0:
-            hi = mid
-        else:
-            lo = mid
-            g_lo = g_mid
-    return (lo + hi) * 0.5
-
-def _find_all_roots(bS: float, mS: float, bV: float, mV: float,
-                    n_scan: int = 256, tol: float = 1e-12
-                    ) -> List[Tuple[float, float]]:
-    """Find all fixed points of the composed clamped map.
-
-    Scans [TRAIT_MIN, TRAIT_MAX] for sign changes of g(s), bisects each
-    bracket, and also checks endpoints.  Returns list of (v*, s*) pairs.
-    """
-    lo, hi = TRAIT_MIN, TRAIT_MAX
-    span = hi - lo
-
-    def g(s):
-        return _composed_map_residual(s, bS, mS, bV, mV)
-
-    # Evaluate on a fine grid
-    ss = [lo + span * i / n_scan for i in range(n_scan + 1)]
-    gs = [g(s) for s in ss]
-
-    roots: List[Tuple[float, float]] = []
-
-    # Check endpoints
-    for i in [0, n_scan]:
-        if abs(gs[i]) < tol:
-            s_star = ss[i]
-            v_star = clamp01(bV + mV * s_star)
-            roots.append((v_star, s_star))
-
-    # Scan for sign changes and bisect
-    for i in range(n_scan):
-        if gs[i] * gs[i + 1] < 0:
-            s_star = _bisect_root(g, ss[i], ss[i + 1], tol=tol)
-            v_star = clamp01(bV + mV * s_star)
-            roots.append((v_star, s_star))
-        elif abs(gs[i + 1]) < tol and i + 1 != n_scan:
-            # Exact zero at grid point (not endpoint, already checked)
-            s_star = ss[i + 1]
-            v_star = clamp01(bV + mV * s_star)
-            roots.append((v_star, s_star))
-
-    # Deduplicate
-    unique: List[Tuple[float, float]] = []
-    for v, s in roots:
-        if all(abs(v - v2) > 1e-8 or abs(s - s2) > 1e-8 for v2, s2 in unique):
-            unique.append((v, s))
-
-    return unique
-
+def _clamped_line_value(b: float, m: float, x: float) -> float:
+    return clamp01(b + m*x)
 
 def find_all_equilibria(bS: float, mS: float, bV: float, mV: float) -> List[Equilibrium]:
-    """Find all equilibria of the paired clamped response rules.
-
-    For unbounded traits (Taylor model): uses the analytic interior
-    intersection directly.
-
-    For bounded traits: uses bisection on the composed clamped map
-        g(s) = clamp(bS + mS * clamp(bV + mV * s)) - s
-    which is guaranteed at least one root by Brouwer's theorem.
-    This replaces the old iterated-best-response fallback and
-    eliminates the 2-cycle artifact.
-    """
     eqs: List[Equilibrium] = []
 
+    interior = _solve_interior(bS, mS, bV, mV)
+
     if not USE_BOUNDED_TRAITS:
-        # Unbounded (Taylor model): analytic interior intersection
-        interior = _solve_interior(bS, mS, bV, mV)
+        # Unbounded: always use interior intersection (it's the unique crossing)
         if interior is not None:
             v0, s0 = interior
             stable = (abs(mS * mV) < 1.0)
@@ -457,48 +356,109 @@ def find_all_equilibria(bS: float, mS: float, bV: float, mV: float) -> List[Equi
                                    host_max=False, path_max=False, nash=True))
         return eqs
 
-    # --- Bounded mode: bisection on composed clamped map ---
-    slope_prod = mS * mV
-    stable_product = (abs(slope_prod) < 1.0)
-
-    # Try analytic interior first (fast path for the common case)
-    interior = _solve_interior(bS, mS, bV, mV)
+    # Bounded mode: always use interior if in bounds.
+    # The simultaneous solution s=clamp(bS+mS*v), v=clamp(bV+mV*s) is exact
+    # when (v0,s0) is in [0,1] — clamping has no effect on interior points.
+    # Stability label tracks sensitivity but doesn't affect validity.
     if interior is not None:
         v0, s0 = interior
         if TRAIT_MIN < v0 < TRAIT_MAX and TRAIT_MIN < s0 < TRAIT_MAX:
-            eqs.append(Equilibrium(v=v0, s=s0, interior=True,
-                                   stable=stable_product,
-                                   host_max=False, path_max=False,
-                                   nash=True))
-            # When |mS*mV| < 1, the interior point is the unique attracting
-            # fixed point — no boundary solutions exist.  Skip the expensive
-            # 256-point bisection scan.  This is the common case for ER
-            # proposals and dominates runtime.
-            if stable_product:
-                return eqs
+            stable = (abs(mS*mV) < 1.0)
+            eqs.append(Equilibrium(v=v0, s=s0, interior=True, stable=stable,
+                                   host_max=False, path_max=False, nash=True))
 
-    # Find all fixed points of the composed map (includes boundary solutions)
-    roots = _find_all_roots(bS, mS, bV, mV)
+    candidates: List[Tuple[float, float]] = []
+    lo, hi = TRAIT_MIN, TRAIT_MAX
+    candidates.extend([(lo,lo),(lo,hi),(hi,lo),(hi,hi)])
 
-    for v_star, s_star in roots:
-        # Skip if we already have this point from the interior solve
-        if any(abs(v_star - e.v) < 1e-8 and abs(s_star - e.s) < 1e-8 for e in eqs):
-            continue
+    for vfix in [lo, hi]:
+        s = _clamped_line_value(bS, mS, vfix)
+        v = _clamped_line_value(bV, mV, s)
+        candidates.append((v, s))
 
-        is_interior = (TRAIT_MIN + 1e-9 < v_star < TRAIT_MAX - 1e-9 and
-                       TRAIT_MIN + 1e-9 < s_star < TRAIT_MAX - 1e-9)
-        host_at_boundary = (s_star <= TRAIT_MIN + 1e-9 or s_star >= TRAIT_MAX - 1e-9)
-        path_at_boundary = (v_star <= TRAIT_MIN + 1e-9 or v_star >= TRAIT_MAX - 1e-9)
+    for sfix in [lo, hi]:
+        v = _clamped_line_value(bV, mV, sfix)
+        s = _clamped_line_value(bS, mS, v)
+        candidates.append((v, s))
 
-        # All solutions are genuine fixed points of the composed map
-        eqs.append(Equilibrium(v=v_star, s=s_star,
-                               interior=is_interior,
-                               stable=True,
-                               host_max=host_at_boundary,
-                               path_max=path_at_boundary,
-                               nash=True))
+    uniq: List[Tuple[float, float]] = []
+    for v, s in candidates:
+        if all(abs(v-v2) > 1e-6 or abs(s-s2) > 1e-6 for v2, s2 in uniq):
+            uniq.append((v, s))
+
+    for v, s in uniq:
+        s_check = _clamped_line_value(bS, mS, v)
+        v_check = _clamped_line_value(bV, mV, s)
+        if abs(s-s_check) < 1e-6 and abs(v-v_check) < 1e-6:
+            host_max = (s <= TRAIT_MIN + 1e-9 or s >= TRAIT_MAX - 1e-9)
+            path_max = (v <= TRAIT_MIN + 1e-9 or v >= TRAIT_MAX - 1e-9)
+            eqs.append(Equilibrium(v=v, s=s, interior=False, stable=True,
+                                   host_max=host_max, path_max=path_max, nash=True))
+
+    # Fallback: when no equilibria found (unstable interior + no boundary
+    # candidates pass), iterate clamped maps to find 2-cycle states.
+    # These are the biologically relevant outcomes — boundary-clamped states
+    # where the system actually rests (stasis).
+    if len(eqs) == 0:
+        eqs.extend(_solve_clamped_cycle(bS, mS, bV, mV))
 
     return eqs
+
+
+def _solve_clamped_cycle(bS: float, mS: float, bV: float, mV: float,
+                          max_iter: int = 200, tol: float = 1e-9) -> List[Equilibrium]:
+    """Iterate clamped response maps to find fixed point or 2-cycle states.
+
+    Tries multiple starting points (Brouwer guarantees a fixed point exists).
+    When |mS*mV| > 1, the clamped map may produce a 2-cycle instead of
+    converging.  Returns BOTH cycle states (labeled nash=False, since they
+    only satisfy one player's best-response) so the selecting player can
+    choose the one maximizing their fitness.
+    """
+    import warnings
+    lo, hi = TRAIT_MIN, TRAIT_MAX
+    starts = [0.5 * (lo + hi), lo + 0.01, hi - 0.01, 0.25, 0.75]
+
+    for v0 in starts:
+        v = v0
+        for _ in range(max_iter):
+            s_new = clamp01(bS + mS * v)
+            v_new = clamp01(bV + mV * s_new)
+            if abs(v_new - v) < tol:
+                # Converged to a true fixed point
+                s_final = clamp01(bS + mS * v_new)
+                host_max = (s_final <= TRAIT_MIN + 1e-9 or s_final >= TRAIT_MAX - 1e-9)
+                path_max = (v_new <= TRAIT_MIN + 1e-9 or v_new >= TRAIT_MAX - 1e-9)
+                return [Equilibrium(v=v_new, s=s_final, interior=False,
+                                    stable=True, host_max=host_max,
+                                    path_max=path_max, nash=True)]
+            v = v_new
+
+    # No starting point converged -> extract 2-cycle states.
+    # These are NOT Nash equilibria (each only satisfies one player's
+    # best-response), so nash=False.
+    warnings.warn(f"Clamped iteration 2-cycle fallback: bS={bS:.4f}, mS={mS:.4f}, "
+                  f"bV={bV:.4f}, mV={mV:.4f}", stacklevel=3)
+    v_a = v  # last iterate from final starting point
+    s_a = clamp01(bS + mS * v_a)
+    v_b = clamp01(bV + mV * s_a)
+    s_b = clamp01(bS + mS * v_b)
+
+    results = []
+    for (vc, sc) in [(v_a, s_a), (v_b, s_b)]:
+        host_max = (sc <= TRAIT_MIN + 1e-9 or sc >= TRAIT_MAX - 1e-9)
+        path_max = (vc <= TRAIT_MIN + 1e-9 or vc >= TRAIT_MAX - 1e-9)
+        results.append(Equilibrium(v=vc, s=sc, interior=False, stable=False,
+                                   host_max=host_max, path_max=path_max, nash=False))
+
+    # Deduplicate if both states are the same (degenerate 2-cycle = fixed point)
+    if abs(results[0].v - results[1].v) < 1e-6 and abs(results[0].s - results[1].s) < 1e-6:
+        results[0] = Equilibrium(v=results[0].v, s=results[0].s, interior=False,
+                                 stable=True, host_max=results[0].host_max,
+                                 path_max=results[0].path_max, nash=True)
+        return [results[0]]
+
+    return results
 
 # ============================================================
 # Simulation (Gillespie architecture)
@@ -566,7 +526,7 @@ class Simulation:
         eqs = find_all_equilibria(self.bS, self.mS, self.bV, self.mV)
         best = _best_equilibrium_for_player(eqs, selector)
         if best is None:
-            # Should be unreachable: Brouwer guarantees at least one root
+            # Should be very rare now with 2-cycle fallback
             import warnings
             warnings.warn(f"No equilibrium found: bS={self.bS:.4f}, mS={self.mS:.4f}, "
                           f"bV={self.bV:.4f}, mV={self.mV:.4f}. Using intercepts.",
@@ -604,9 +564,7 @@ class Simulation:
     def _propose_ET_mutants_host(self) -> List[Tuple[float, float]]:
         """Host ET: mutate s by step * std_dev_move, keep v fixed."""
         muts = []
-        steps = self._trait_steps if not USE_SIMPLE_PROPOSALS else \
-                [self.rng.gauss(0, 1) for _ in range(num_step_bins)]
-        for step in steps:
+        for step in self._trait_steps:
             new_s = clamp01_or_unbounded(self.s + std_dev_move * step)
             muts.append((self.v, new_s))
         return muts
@@ -614,9 +572,7 @@ class Simulation:
     def _propose_ET_mutants_path(self) -> List[Tuple[float, float]]:
         """Pathogen ET: mutate v by step * std_dev_move, keep s fixed."""
         muts = []
-        steps = self._trait_steps if not USE_SIMPLE_PROPOSALS else \
-                [self.rng.gauss(0, 1) for _ in range(num_step_bins)]
-        for step in steps:
+        for step in self._trait_steps:
             new_v = clamp01_or_unbounded(self.v + std_dev_move * step)
             muts.append((new_v, self.s))
         return muts
@@ -634,14 +590,9 @@ class Simulation:
           - new_bS = new_s - new_mS * v   (intercept derived: line passes through (v, new_s))
         Returns list of (new_bS, new_s_angle, new_mS).
         If FIX_HOST_REACTIVITY, only trait mutates (angle fixed).
-        When USE_SIMPLE_PROPOSALS, draws random Gaussian steps instead of grid.
         """
         muts = []
-        t_steps = self._trait_steps if not USE_SIMPLE_PROPOSALS else \
-                  [self.rng.gauss(0, 1) for _ in range(num_step_bins)]
-        a_steps = self._angle_steps if not USE_SIMPLE_PROPOSALS else \
-                  [self.rng.gauss(0, 1) for _ in range(num_step_bins)]
-        for t_step in t_steps:
+        for t_step in self._trait_steps:
             new_s = self.s + std_dev_move * t_step
             if FIX_HOST_REACTIVITY:
                 new_angle = self.s_angle
@@ -649,7 +600,7 @@ class Simulation:
                 new_bS = new_s - new_mS * self.v
                 muts.append((new_bS, new_angle, new_mS))
             else:
-                for a_step in a_steps:
+                for a_step in self._angle_steps:
                     new_angle = wrap_angle(self.s_angle + std_dev_angle * a_step)
                     new_mS = angle_to_slope(new_angle)
                     new_bS = new_s - new_mS * self.v
@@ -663,14 +614,9 @@ class Simulation:
           - new_angle = wrap(v_angle + std_dev_angle * angle_step)
           - new_mV = tan(new_angle)
           - new_bV = new_v - new_mV * s   (line passes through (s, new_v))
-        When USE_SIMPLE_PROPOSALS, draws random Gaussian steps instead of grid.
         """
         muts = []
-        t_steps = self._trait_steps if not USE_SIMPLE_PROPOSALS else \
-                  [self.rng.gauss(0, 1) for _ in range(num_step_bins)]
-        a_steps = self._angle_steps if not USE_SIMPLE_PROPOSALS else \
-                  [self.rng.gauss(0, 1) for _ in range(num_step_bins)]
-        for t_step in t_steps:
+        for t_step in self._trait_steps:
             new_v = self.v + std_dev_move * t_step
             if FIX_PATH_REACTIVITY:
                 new_angle = self.v_angle
@@ -678,7 +624,7 @@ class Simulation:
                 new_bV = new_v - new_mV * self.s
                 muts.append((new_bV, new_angle, new_mV))
             else:
-                for a_step in a_steps:
+                for a_step in self._angle_steps:
                     new_angle = wrap_angle(self.v_angle + std_dev_angle * a_step)
                     new_mV = angle_to_slope(new_angle)
                     new_bV = new_v - new_mV * self.s
@@ -782,10 +728,6 @@ class Simulation:
         4. Choose who mutates proportional to weighted cumulative rate
         5. Choose specific mutation proportional to rate within selected player
         6. Return exponential dwell time = 1 / total_rate
-
-        When USE_SIMPLE_PROPOSALS is True, proposal methods draw random
-        Gaussian steps instead of the deterministic quantile grid.
-        The Gillespie framework is unchanged.
         """
 
         host_pinned = FIX_HOST_TRAIT is not None

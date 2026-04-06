@@ -164,6 +164,11 @@ def run_single_condition(
     sim.DIPLOID_KIMURA = diploid
     sim.FIX_HOST_TRAIT = fix_host_trait
     sim.FIX_PATH_TRAIT = fix_path_trait
+    # For simple proposals test:
+    if tag is not None and "simple" in tag:
+        sim.USE_SIMPLE_PROPOSALS = True
+    else:
+        sim.USE_SIMPLE_PROPOSALS = False
     if sigma is not None:
         sim.std_dev_move = sigma
     if gamma is not None:
