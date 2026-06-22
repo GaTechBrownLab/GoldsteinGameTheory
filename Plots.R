@@ -51,12 +51,12 @@ dir.create("figures", showWarnings = FALSE)
 mytheme <- theme_bw() +
   theme(
     axis.ticks.length   = unit(0.2, "cm"),
-    legend.text         = element_text(size = 12),
-    axis.text           = element_text(size = 14, color = "black"),
-    axis.title          = element_text(size = 14),
-    plot.title          = element_text(size = 14),
+    legend.text         = element_text(size = 14),
+    axis.text           = element_text(size = 16, color = "black"),
+    axis.title          = element_text(size = 17),
+    plot.title          = element_text(size = 16),
     panel.border        = element_rect(fill = NA, colour = "black", linewidth = 1),
-    strip.text.x        = element_text(size = 14),
+    strip.text.x        = element_text(size = 16),
     strip.background    = element_blank(),
     legend.title        = element_blank(),
     axis.text.x.top     = element_blank(),
@@ -1548,10 +1548,95 @@ hex_landscape_panel <- function(data, model_name = "acute",
     scale_y_continuous(breaks = ax_breaks, limits = dom) +
     coord_fixed() + mytheme + theme(legend.position = "none")
   
-  if (!show_x) p <- strip_x(p) else p <- p + labs(x = "v (virulence)")
-  if (!show_y) p <- strip_y(p) else p <- p + labs(y = "c (clearance)")
+  if (!show_x) p <- strip_x(p) else p <- p + labs(x = "v")
+  if (!show_y) p <- strip_y(p) else p <- p + labs(y = "c")
   p
 }
+
+
+#' 2D hex density of (hostFit, pathFit) per scenario.
+#' Mirrors hex_landscape_panel for the fitness plane.
+#'   - hex density of realised fitness pairs
+#'   - black dot at Nash fitness (W_H(v*, s*), W_P(v*, s*))
+#'   - gold cross at empirical mean
+hex_fitness_panel <- function(data, model_name = "acute",
+                              nbins = 100, count_limits = NULL,
+                              show_x = TRUE, show_y = TRUE,
+                              show_nash = TRUE,
+                              x_lims = NULL, y_lims = NULL,
+                              show_legend = FALSE) {
+  mod     <- FITNESS_MODELS[[model_name]]
+  nash_pt <- if (show_nash) find_nash(model_name) else NULL
+
+  # Restrict to finite fitness values for axis limits
+  d <- data %>% filter(is.finite(hostFit), is.finite(pathFit))
+  if (nrow(d) == 0) return(ggplot() + theme_void())
+
+  if (is.null(x_lims)) {
+    q_h   <- quantile(d$hostFit, 0.99, na.rm = TRUE)
+    x_max <- if (q_h <= 1.05) 1 else q_h * 1.05
+    x_min <- max(0, min(d$hostFit, na.rm = TRUE))
+    x_lims <- c(x_min, x_max)
+  }
+  if (is.null(y_lims)) {
+    q_p   <- quantile(d$pathFit, 0.99, na.rm = TRUE)
+    y_max <- if (q_p <= 1.05) 1 else q_p * 1.05
+    y_min <- max(0, min(d$pathFit, na.rm = TRUE))
+    y_lims <- c(y_min, y_max)
+  }
+
+  ax_breaks_x <- pretty(x_lims, n = 3)
+  ax_breaks_y <- pretty(y_lims, n = 3)
+
+  p <- ggplot() +
+    geom_hex(data = d, aes(x = hostFit, y = pathFit),
+             bins = nbins, alpha = 0.85)
+
+  fill_args <- list(option = "plasma", name = "Count",
+                    trans = "log10", oob = scales::squish)
+  if (!is.null(count_limits)) fill_args$limits <- count_limits
+  p <- p + do.call(scale_fill_viridis_c, fill_args)
+
+  if (!is.null(nash_pt)) {
+    w_h_nash <- mod$fH(nash_pt$v, nash_pt$s)
+    w_p_nash <- mod$fP(nash_pt$v, nash_pt$s)
+    p <- p + geom_point(data = data.frame(hostFit = w_h_nash,
+                                          pathFit = w_p_nash),
+                        aes(x = hostFit, y = pathFit),
+                        size = 4, color = "black", shape = 16)
+  }
+
+  mean_pt <- data.frame(hostFit = mean(d$hostFit, na.rm = TRUE),
+                        pathFit = mean(d$pathFit, na.rm = TRUE))
+  p <- p + geom_point(data = mean_pt,
+                      aes(x = hostFit, y = pathFit),
+                      size = 4, color = "#FFD700", shape = 4, stroke = 1.5)
+
+  p <- p +
+    scale_x_continuous(breaks = ax_breaks_x, limits = x_lims) +
+    scale_y_continuous(breaks = ax_breaks_y, limits = y_lims) +
+    coord_fixed() + mytheme + theme(legend.position = "none")
+
+  if (show_legend) {
+    p <- p + theme(
+      legend.position = "inside",
+      legend.position.inside = c(0.97, 0.97),
+      legend.justification = c(1, 1),
+      legend.background = element_rect(fill = "white", color = "grey80",
+                                       linewidth = 0.3),
+      legend.margin = margin(4, 6, 4, 6),
+      legend.title = element_text(size = 11),
+      legend.text = element_text(size = 9),
+      legend.key.height = unit(0.35, "cm"),
+      legend.key.width = unit(0.35, "cm")
+    )
+  }
+
+  if (!show_x) p <- strip_x(p) else p <- p + labs(x = expression(W[H]))
+  if (!show_y) p <- strip_y(p) else p <- p + labs(y = expression(W[P]))
+  p
+}
+
 
 #' Full hex-density figure: models × scenarios grid
 #' @param all_data Combined data from load_all_sims()
@@ -1945,6 +2030,7 @@ fig_slope_distribution <- function(es_data = NULL,
                                    filename = NULL,
                                    width = NULL, height = NULL,
                                    title_label = "Phase Space: Strategy Slopes",
+                                   pct_inline = FALSE,
                                    tag_filter = NA, tag_prefix = NULL) {
 
   if (is.null(es_data)) {
@@ -2010,10 +2096,20 @@ fig_slope_distribution <- function(es_data = NULL,
     labs(x = expression(m[S]~"(host slope)"),
          y = expression(m[V]~"(pathogen slope)"),
          title = title_label,
-         subtitle = sprintf("%.0f%% of time in stable region", pct_interior)) +
+         subtitle = if (pct_inline) NULL
+                    else sprintf("%.0f%% of time in stable region",
+                                 pct_interior)) +
     mytheme +
     theme(legend.position = "right")
-  
+
+  if (pct_inline) {
+    p <- p + annotate("text",
+                      x = xlim[1] + diff(xlim) * 0.03,
+                      y = ylim[2] - diff(ylim) * 0.03,
+                      label = sprintf("%.0f%% stable", pct_interior),
+                      hjust = 0, vjust = 1, size = 5)
+  }
+
   if (!is.null(filename)) {
     w <- if (!is.null(width)) width else 7
     h <- if (!is.null(height)) height else 6
@@ -4034,197 +4130,6 @@ fig_gamma_acf <- function(model_name = "acute",
 # CALL BLOCK 
 # ============================================================================
 
-# # --- Gamma sweep figures ---
-# # (Requires gamma sweep data — run experiments first)
-# #
-# # Recommended execution sequence:
-# #   1. Run experiments:
-# #      python run_experiments.py -f acute --gamma-sweep 0.01,0.5,0.99 --diploid
-# #   2. Refresh catalog:
-# #      refresh_catalog()
-# #   3. Generate figures:
-#
-# # Core figures (already in Plots.R):
-# fig_gamma_timeseries("acute", filename = "Gamma_timeseries_acute")
-# fig_gamma_summary("acute", filename = "Gamma_summary_acute")
-#
-# # New figures:
-# fig_gamma_who_mutates("acute", filename = "Gamma_who_mutates_acute")
-# fig_gamma_symmetry_test("acute", filename = "Gamma_symmetry_acute")
-# fig_gamma_trait_density("acute", filename = "Gamma_trait_density_ERER_acute")
-# fig_gamma_tempo("acute", filename = "Gamma_tempo_acute")
-# fig_gamma_acf("acute", filename = "Gamma_acf_ERER_acute")
-#
-# # ER-ER only (focused):
-# fig_gamma_timeseries("acute", conditions = "ERhost_ERpath",
-#                       filename = "Gamma_ERER_timeseries_acute")
-# fig_gamma_trait_density("acute", condition_filter = "ERhost_ERpath",
-#                          filename = "Gamma_ERER_density_acute")
-#
-# # Asymmetric conditions only (for symmetry test):
-# fig_gamma_timeseries("acute",
-#                       conditions = c("EThost_ERpath", "ERhost_ETpath"),
-#                       filename = "Gamma_asymmetric_timeseries_acute")
-#
-# # Other models:
-# fig_gamma_timeseries("minimal", filename = "Gamma_timeseries_minimal")
-# fig_gamma_summary("minimal", filename = "Gamma_summary_minimal")
-
-#Replicate overlay Usage:
-# Single replicate (unchanged)
-#fig_timeseries("minimal", "Time_series_minimal_sigma0.01",
-#                 diploid = TRUE, sigma = 0.01, tag_filter = "final_r1")
-
-# Replicate overlay
-#fig_timeseries("minimal", "Time_series_minimal_sigma0.01_reps",
-#               diploid = TRUE, sigma = 0.01, tag_prefix = "final_r")
-
-# Any downstream figure with replicates (pools data)
-#fig_trait_density("minimal", sigma = 0.01, diploid = TRUE,
-#                  tag_prefix = "final_r", filename = "Trait_density_minimal_reps")
-
-#-------
-#PLOTS#
-#-------
-# Overwrite default trait domains with model-specific ones if provided
-
-# Trait domain per model.  Taylor uses rates (unbounded); others use [0,1].
-TRAIT_DOMAIN <- list(
-  acute   = c(0.001, 0.999),
-  chronic = c(0.001, 0.999),
-  minimal = c(0.001, 0.999),
-  taylor  = c(0.01,  20.0)     # Nash ≈ (v*=9, c*=3)
-)
-
-# Clean axis limits for plotting (not the simulation clamp bounds)
-TRAIT_DISPLAY <- list(
-  acute   = c(0, 1),
-  chronic = c(0, 1),
-  minimal = c(0, 1),
-  taylor  = c(0, 20)
-)
-
-# These do not need simulation data, so we can call them directly.
-# landscapes for all simulations
-fig_landscape(model_name = "acute", filename = "Fitness_landscapes_acute")
-fig_landscape(model_name = "minimal", filename = "Fitness_landscapes_minimal")
-fig_landscape(model_name = "taylor", filename = "Fitness_landscapes_taylor")
-fig_landscape(model_name = "chronic", filename = "Fitness_landscapes_chronic")
-
-# strategy panels (analytical — no simulation data needed)
-fig_strategy_panels(model_name = "acute",   filename = "Strategies_acute")
-fig_strategy_panels(model_name = "minimal", filename = "Strategies_minimal")
-fig_strategy_panels(model_name = "taylor",  filename = "Strategies_taylor")
-fig_strategy_panels(model_name = "chronic", filename = "Strategies_chronic")
-
-#SIMULATION PLOTS#
-
-# See everything at a glance
-list_experiments()
-
-# Base runs (auto-picks the untagged ones)
-# Max_pts will thin the data
-# there is step and smoothing functions too but they do not work well right now
-
-# Single replicate (backward compatible)
-fig_timeseries("minimal", "Time_series_minimal_oldSolver_r1", diploid = TRUE, max_pts = 100,
-               sigma = 0.01, width = 9, height = 10, tag_filter = "final_r1")
-
-fig_timeseries("minimal", "Time_series_minimal_simpleSolver_r1", diploid = TRUE, max_pts = 100,
-               sigma = 0.01, width = 9, height = 10, tag_filter = "final_r1_simpleSolver")
-
-fig_timeseries("minimal", "Time_series_minimal_simpleSolver_simpleProposals_r1", diploid = TRUE, max_pts = 100,
-               sigma = 0.01, width = 9, height = 10, tag_filter = "final_r1_simpleSolver_simple_Proposals")
-
-fig_timeseries("minimal", "Time_series_minimal_final_long", diploid = TRUE, max_pts = 100,
-               sigma = 0.01, width = 9, height = 10, tag_filter = "final_long")
-
-# Replicate overlay: loads final_r1, final_r2, final_r3 and overlays colored lines
-fig_timeseries("minimal", "Time_series_minimal_100K", diploid = TRUE, max_pts = 100,
-               sigma = 0.01, width = 9, height = 10, tag_prefix = "final")
-
-# Specific variants
-# Works even if only some conditions exist for that variant
-# (Only for acute)
-# Step size experiments
-fig_step_size_comparison(model_name = "acute", diploid = TRUE, 
-                         filename = "Stepsize_sweeps_acute_EThost_ETpath", 
-                         width = 8, height = 10)
-
-# Host and Path fixed experiments
-fig_pinned_comparison("acute", diploid = TRUE, sigma = 0.1, 
-                      filename = "Pinned_partner_comparison_acute", 
-                      width = 8, height = 10)
-
-
-# Other figures
-
-# Nash violation map — shows where in trait space the Nash condition is violated, 
-# colored by magnitude of violation. Useful for understanding the geometry of the 
-#landscape and why certain strategies are stable or not.
-fig_nash_violation_map(model_name = "minimal", diploid = T, resolution = 100,
-                       width = 7, height = 5, sigma = 0.01, tag_prefix = "final",
-                       filename = "Nash_violation_map_minimal_final_100K")
-
-# Snapshots of evolutionary trajectories in trait space, colored by time, with Nash
-fig_snapshots(model_name = "minimal", diploid = TRUE, sigma = 0.01, tag_filter= "final_r1",
-              width = 8, height = 6, filename = "ER-ER_strategy_snapshots_minimal_100K")
-
-# Hexbin of strategy points across the entire time series, with Nash equilibrium marked, 
-#nfaceted by condition. This shows the overall distribution of strategies explored over time 
-# and how it relates to the Nash equilibrium under different conditions.
-fig_hex_combined(models = "minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final",
-                 width = 8, height = 4, filename = "ER-ER_strategy_points_minimal_100K") 
-
-
-# Evolution of strategies over time, with Nash equilibrium marked, faceted by condition
-fig_strategy_evolution(model_name = "minimal", diploid = TRUE, sigma = 0.01, 
-                       tag_prefix = "final", width = 8, height = 6, 
-                       filename = "ER-ER_strategy_evolution_minimal_100K")
-
-
-# Distribution of spectral slopes in the time series, which can indicate stability 
-#and memory effects.
-
-fig_slope_distribution(model_name = "minimal", diploid = TRUE, sigma = 0.01, 
-                       tag_prefix = "final", width = 6, height = 5, 
-                       filename = "ER-ER_stability_minimal_100K")  
-
-# Other TS stat, diagnostic figures: 
-# CV of traits in sliding windows, spectral slope distribution, correlation length
-fig_ts_stats("minimal", diploid = TRUE, sigma = 0.01,tag_prefix = "final", filename = "TS_stats_minimal_100K")
-fig_ts_stats("minimal", diploid = TRUE, sigma = 0.01,tag_prefix = "final", filename = "TS_stats_minimal", window = 20, step = 5)
-
-# Step size distribution across conditions, which can indicate how the effective mutation
-fig_step_sizes("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Realized_step_sizes_minimal_100K")
-
-# Neutral drift analysis: fraction of mutations that are effectively neutral, and the
-# distribution of their decoupling ratios (genotype vs phenotype change), which can
-# indicate how much of the evolutionary dynamics is driven by drift vs selection, and
-# how much genotypic change is decoupled from phenotypic change.
-fig_neutral_drift("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Neutral_drift_minimal_100K")
-
-# Dwell time distributions in different regions of trait space (near Nash, stable
-# regions, boundaries), which can indicate how long populations tend to stay in these
-# regions and how that differs across conditions.
-fig_dwell_times("minimal", region = "nash", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Dwell_nash_minimal_100K")
-fig_dwell_times("minimal", region = "stable", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Dwell_stable_minimal_100K")
-fig_dwell_times("minimal", region = "boundary", diploid = TRUE, , sigma = 0.01, tag_prefix = "final", filename = "Dwell_boundary_minimal_100K")
-
-# Combined omega distributions + dwell times near Nash: shows selection regime
-# (purifying vs positive) alongside equilibrium residence patterns.
-fig_omega("minimal", diploid = TRUE, sigma = 0.01, tag_prefix = "final", filename = "Omega_minimal_100K")
-
-# Trait density distributions across conditions, with Nash equilibrium marked, which can
-# indicate how the population is distributed in trait space and how close it is to the Nash
-# equilibrium under different conditions.
-fig_trait_density("minimal", sigma = 0.01, tag_prefix = "final", diploid = TRUE, filename = "Trait_density_minimal_100K")
-
-# Boundary occupancy: fraction of time spent at trait-space boundaries, which can indicate
-# how much the population is pushed against the limits of trait space under different conditions.
-fig_boundary_occupancy("minimal", sigma = 0.01, tag_prefix = "final", diploid = TRUE, filename = "Boundary_occupancy_minimal_100K")
-
-
 #!/usr/bin/env Rscript
 # ============================================================================
 # compute_manuscript_numbers.R
@@ -4455,3 +4360,637 @@ if (!is.na(erer_slope)) {
   cat(sprintf("ER/ER stable (|mc*mv|<1):      ~%.0f%%\n", erer_slope))
 }
 
+# ============================================================================
+# Goldstein et al. Game Theory — Grouped manuscript figures (v4 revision)
+# Canan Karakoc
+# ============================================================================
+#
+#-------
+#PLOTS#
+#-------
+# Overwrite default trait domains with model-specific ones if provided
+
+# Trait domain per model.  Taylor uses rates (unbounded); others use [0,1].
+# TRAIT_DOMAIN <- list(
+#  acute   = c(0.001, 0.999),
+#  chronic = c(0.001, 0.999),
+#  minimal = c(0.001, 0.999),
+#  taylor  = c(0.01,  20.0)     # Nash ≈ (v*=9, c*=3)
+#)
+
+# Clean axis limits for plotting (not the simulation clamp bounds)
+#TRAIT_DISPLAY <- list(
+#  acute   = c(0, 1),
+#  chronic = c(0, 1),
+#  minimal = c(0, 1),
+#  taylor  = c(0, 20)
+#)
+
+# Addresses SB comment c158 ("might be useful to gather into a smaller number
+# of multi-panel figures that together make clear headline points").
+#
+# Composes existing panels from Plots.R into FOUR grouped main-text figures
+# with unified A-Z tagging.  Existing fig_* functions are left untouched.
+#
+#   Fig 1 — SETUP        : fitness landscape (A–C) + strategy geometry (D–G)
+#   Fig 2 — DYNAMICS     : trait & fitness & omega time series (already a grid)
+#   Fig 3 — MECHANISM    : step-size amplification, boundary occupancy,
+#                          Nash stability map, slope phase space (A–D)
+#   Fig 4 — STATISTICS   : omega, dwell-times near Nash, dwell at boundary,
+#                          TS stats (CV, spectral slope, correlation length)
+#
+# USAGE:
+#
+#   fig_grouped_1_setup     ("minimal")
+#   fig_grouped_2_dynamics  ("minimal", diploid = TRUE, sigma = 0.01,
+#                            tag_prefix = "final")
+#   fig_grouped_3_mechanism ("minimal", diploid = TRUE, sigma = 0.01,
+#                            tag_prefix = "final")
+#   fig_grouped_4_statistics("minimal", diploid = TRUE, sigma = 0.01,
+#                            tag_prefix = "final")
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Helper: take an existing patchwork (or ggplot), strip any internal tags
+# so it can become a single slot in an outer A-Z scheme.  Keeps internal
+# titles/subtitles intact — useful for compound diagnostic panels (e.g.
+# fig_ts_stats) where the internal layout carries meaning.
+# ----------------------------------------------------------------------------
+.as_tag_slot <- function(p) {
+  if (inherits(p, "patchwork")) {
+    p <- p & theme(plot.tag = element_blank())
+  }
+  wrap_elements(full = p)
+}
+
+# Bold-tag theme reused across grouped figures
+.tag_theme <- theme(plot.tag = element_text(face = "bold", size = 18),
+                    plot.tag.position = c(-0.02, 1.04))
+
+# iCloud Drive in ~/Documents intermittently triggers
+# "Error in grDevices::dev.off() : write failed" when ggsave closes a large
+# PDF: the sync daemon grabs the inode before R finishes flushing.  Workaround
+# is to render to /tmp (outside iCloud), then copy in.
+safe_ggsave <- function(filename, plot, ...) {
+  tmp <- tempfile(fileext = paste0(".", tools::file_ext(filename)))
+  ggsave(tmp, plot, ...)
+  file.copy(tmp, filename, overwrite = TRUE)
+  file.remove(tmp)
+  invisible(filename)
+}
+
+
+# ============================================================================
+# PANEL BUILDERS — analytical figures (no simulation data needed)
+# ============================================================================
+#
+# These mirror the panel-building logic inside fig_landscape and
+# fig_strategy_panels, but each returns a *list* of ggplots rather than a
+# pre-assembled patchwork, so the outer grouped figure controls tagging.
+
+#' Three landscape panels: host, pathogen, joint with Nash.
+#' Returns list(host = ggplot, path = ggplot, joint = ggplot).
+panels_landscape <- function(model_name = "minimal") {
+  grid    <- make_fitness_grid(model_name)
+  br      <- calc_best_responses(model_name)
+  nash_pt <- find_nash(model_name)
+  dom     <- if (model_name %in% names(TRAIT_DISPLAY))
+    TRAIT_DISPLAY[[model_name]] else TRAIT_DOMAIN[[model_name]]
+  
+  grid$fH_norm    <- grid$fH / max(grid$fH)
+  grid$fP_norm    <- grid$fP / max(grid$fP)
+  grid$joint_norm <- grid$fH_norm * grid$fP_norm
+  
+  ax_breaks <- if (dom[2] <= 1) c(0, 0.5, 1) else pretty(dom, n = 4)
+  
+  pHost <- ggplot(grid, aes(x = v, y = s, z = fH_norm)) +
+    geom_contour_filled(breaks = seq(0, 1, length.out = 10)) +
+    geom_line(data = br$host, aes(x = v, y = s),
+              color = "steelblue", linewidth = 1.5,
+              inherit.aes = FALSE, linetype = "dashed") +
+    labs(x = "v (virulence)", y = "c (clearance)") +
+    coord_fixed(xlim = dom, ylim = dom, expand = FALSE) +
+    scale_x_continuous(breaks = ax_breaks) +
+    scale_y_continuous(breaks = ax_breaks) +
+    scale_fill_viridis_d(option = "viridis", guide = "none") +
+    mytheme
+
+  pPath <- ggplot(grid, aes(x = v, y = s, z = fP_norm)) +
+    geom_contour_filled(breaks = seq(0, 1, length.out = 10)) +
+    geom_line(data = br$path, aes(x = v, y = s),
+              color = "lightcoral", linewidth = 1.5,
+              inherit.aes = FALSE, linetype = "dashed") +
+    labs(x = "v (virulence)", y = NULL) +
+    coord_fixed(xlim = dom, ylim = dom, expand = FALSE) +
+    scale_x_continuous(breaks = ax_breaks) +
+    scale_y_continuous(breaks = ax_breaks) +
+    scale_fill_viridis_d(option = "viridis", guide = "none") +
+    mytheme +
+    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+  
+  pJoint <- ggplot(grid, aes(x = v, y = s, z = joint_norm)) +
+    geom_contour(aes(z = fH_norm), bins = 10, color = "steelblue", alpha = 0.5) +
+    geom_contour(aes(z = fP_norm), bins = 10, color = "lightcoral", alpha = 0.5) +
+    geom_line(data = br$host, aes(x = v, y = s),
+              color = "steelblue", inherit.aes = FALSE,
+              linewidth = 1.5, linetype = "dashed") +
+    geom_line(data = br$path, aes(x = v, y = s),
+              color = "lightcoral", inherit.aes = FALSE,
+              linewidth = 1.5, linetype = "dashed") +
+    geom_point(data = nash_pt, aes(x = v, y = s),
+               color = "grey20", size = 4, inherit.aes = FALSE) +
+    labs(x = "v (virulence)", y = NULL) +
+    coord_fixed(xlim = dom, ylim = dom, expand = FALSE) +
+    scale_x_continuous(breaks = ax_breaks) +
+    scale_y_continuous(breaks = ax_breaks) +
+    mytheme +
+    theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+  
+  list(host = pHost, path = pPath, joint = pJoint)
+}
+
+
+#' Four strategy-geometry panels: ET, host-slope, path-slope, both-slope.
+#' Returns list(et, host_slope, path_slope, both_slope).
+panels_strategy <- function(model_name = "minimal") {
+  grid    <- make_fitness_grid(model_name, resolution = 300)
+  br      <- calc_best_responses(model_name)
+  nash_pt <- find_nash(model_name)
+  dom     <- TRAIT_DOMAIN[[model_name]]
+  v_star  <- nash_pt$v
+  s_star  <- nash_pt$s
+  
+  col_host <- "darkblue"
+  col_path <- "firebrick"
+  
+  ax_breaks <- if (dom[2] <= 1) c(0, 0.5, 1) else pretty(dom, n = 4)
+  
+  pad   <- (dom[2] - dom[1]) * 0.1
+  v_seq <- seq(dom[1] - pad, dom[2] + pad, length.out = 500)
+  s_seq <- seq(dom[1] - pad, dom[2] + pad, length.out = 500)
+  
+  host_line_fn <- function(v, bS, mS) clamp_trait(bS + mS * v, model_name)
+  path_line_fn <- function(s, bV, mV) clamp_trait(bV + mV * s, model_name)
+  
+  make_panel <- function(bV, mV, bS, mS,
+                         show_stable = TRUE,
+                         boundary_pts = NULL,
+                         show_yaxis = TRUE) {
+    
+    host_data <- data.frame(v = v_seq, s = host_line_fn(v_seq, bS, mS)) %>%
+      filter(v >= dom[1], v <= dom[2], s >= dom[1], s <= dom[2])
+    path_data <- data.frame(s = s_seq, v = path_line_fn(s_seq, bV, mV)) %>%
+      filter(v >= dom[1], v <= dom[2], s >= dom[1], s <= dom[2])
+    
+    den   <- 1 - mV * mS
+    v_int <- if (abs(den) > 1e-9) (bV + mV * bS) / den else v_star
+    s_int <- bS + mS * v_int
+    
+    p <- ggplot(grid, aes(v, s)) +
+      geom_contour(aes(z = fH), color = "steelblue", bins = 10,
+                   linewidth = 0.3, alpha = 0.7) +
+      geom_contour(aes(z = fP), color = "lightcoral", bins = 10,
+                   linewidth = 0.3, alpha = 0.7) +
+      geom_line(data = host_data, aes(v, s),
+                linetype = "solid", linewidth = 1.5, color = col_host) +
+      geom_line(data = path_data, aes(v, s),
+                linetype = "solid", linewidth = 1.5, color = col_path) +
+      coord_fixed(xlim = dom, ylim = dom, expand = FALSE) +
+      scale_x_continuous(breaks = ax_breaks) +
+      scale_y_continuous(breaks = ax_breaks) +
+      mytheme
+
+    if (show_yaxis) {
+      p <- p + labs(x = "v (virulence)", y = "c (clearance)")
+    } else {
+      p <- p + labs(x = "v (virulence)", y = NULL) +
+        theme(axis.text.y = element_blank(), axis.ticks.y = element_blank())
+    }
+
+    if (show_stable) {
+      p <- p + geom_point(aes(x = v_int, y = s_int), size = 4, colour = "black")
+    } else {
+      p <- p + geom_point(aes(x = v_int, y = s_int), size = 4, shape = 21,
+                          fill = "gray70", colour = "black", stroke = 1)
+    }
+    if (!is.null(boundary_pts)) {
+      p <- p + geom_point(data = boundary_pts, aes(x = v, y = s),
+                          size = 4, colour = "black")
+    }
+    p
+  }
+  
+  # Panel D in original: both slopes large -> destabilization
+  mS_D <- 2.5; mV_D <- 2.5
+  bS_D <- s_star - mS_D * v_star
+  bV_D <- v_star - mV_D * s_star
+  if (bS_D > dom[1] - 1e-3) bS_D <- dom[1] - 1e-3
+  if (bV_D > dom[1] - 1e-3) bV_D <- dom[1] - 1e-3
+  boundary_D <- data.frame(
+    v = c(clamp_trait(bV_D, model_name),
+          clamp_trait(bV_D + mV_D * dom[2], model_name)),
+    s = c(clamp_trait(bS_D, model_name),
+          clamp_trait(bS_D + mS_D * dom[2], model_name))
+  )
+  
+  list(
+    et         = make_panel(v_star, 0, s_star, 0, TRUE, NULL, TRUE),
+    host_slope = make_panel(v_star, 0,
+                            s_star - 0.5 * v_star, 0.5,
+                            TRUE, NULL, FALSE),
+    path_slope = make_panel(v_star - 0.8 * s_star, 0.8,
+                            s_star, 0, TRUE, NULL, FALSE),
+    both_slope = make_panel(bV_D, mV_D, bS_D, mS_D,
+                            FALSE, boundary_D, FALSE)
+  )
+}
+
+
+# ============================================================================
+# GROUPED FIGURE 1 — SETUP
+# ============================================================================
+# Top row (A-C):  host fitness, pathogen fitness, joint with Nash
+# Bottom row (D-G): ET equilibrium, host-only slope, pathogen-only slope,
+#                   both slopes (destabilization with boundary contact)
+# Headline: "The game and the strategy space; mutual ER opens a destabilising
+#            slope direction."
+# ============================================================================
+fig_grouped_1_setup <- function(model_name = "minimal",
+                                filename = "Fig1_setup",
+                                width = 13, height = 9) {
+
+  L <- panels_landscape(model_name)
+  S <- panels_strategy (model_name)
+
+  top    <- L$host       | L$path       | L$joint
+  bottom <- S$et         | S$host_slope | S$path_slope | S$both_slope
+
+  out <- (top / bottom) +
+    plot_layout(heights = c(1.33, 1)) +
+    plot_annotation(tag_levels = "A") &
+    .tag_theme &
+    theme(plot.margin = margin(12, 14, 4, 18))
+  
+  if (!is.null(filename)) {
+    safe_ggsave(paste0("figures/", filename, ".pdf"), out,
+                width = width, height = height)
+    safe_ggsave(paste0("figures/", filename, ".png"), out,
+                width = width, height = height, dpi = 300)
+    cat("Saved:", filename, "\n")
+  }
+  out
+}
+
+
+# ============================================================================
+# GROUPED FIGURE 2 — DYNAMICS
+# ============================================================================
+# Two rows of 4 scenario panels (ET/ET, ET host / ER path, ER host / ET path,
+# ER/ER):
+#   Row 1 (A-D): trait-density   hex of (v, c) with Nash dot + mean cross
+#   Row 2 (E-H): fitness-density hex of (W_H, W_P) with Nash dot + mean cross
+# Both rows are pooled across replicates.  The full 6-row time-series grid
+# lives in fig_supp_timeseries() (supplementary).
+# Headline: "ER scenarios visit boundary trait combinations and the corresponding
+#            low-fitness pairs."
+# ============================================================================
+fig_grouped_2_dynamics <- function(model_name = "minimal",
+                                   sigma = 0.01, diploid = TRUE,
+                                   tag_prefix = "final",
+                                   nbins = 80,
+                                   filename = "Fig2_dynamics",
+                                   width = 13, height = 8) {
+
+  cond_names <- c("EThost_ETpath", "EThost_ERpath",
+                  "ERhost_ETpath", "ERhost_ERpath")
+  col_titles <- c("ET / ET", "ET host / ER path",
+                  "ER host / ET path", "ER / ER")
+
+  all_rep_data <- load_replicates(
+    model_name, sigma = sigma, diploid = diploid,
+    conditions = cond_names, tag_prefix = tag_prefix
+  )
+  if (is.null(all_rep_data) || nrow(all_rep_data) == 0)
+    stop("No replicate data loaded for Fig 2 dynamics")
+
+  scen_dfs <- setNames(
+    lapply(cond_names, function(cn) {
+      all_rep_data %>% filter(condition == cn)
+    }),
+    cond_names
+  )
+
+  trait_panels <- lapply(seq_along(cond_names), function(ci) {
+    d <- scen_dfs[[ci]]
+    if (is.null(d) || nrow(d) == 0)
+      return(ggplot() + theme_void())
+    p <- hex_landscape_panel(d, model_name = model_name, nbins = nbins,
+                             show_x = TRUE, show_y = (ci == 1))
+    p + labs(title = col_titles[ci]) +
+      theme(plot.title = element_text(hjust = 0.5, size = 16, face = "bold"))
+  })
+
+  # Shared fitness range across scenarios so panels are comparable.
+  # Use the 99th percentile of pooled finite fitness as the upper bound,
+  # with a small headroom; include the Nash fitness so the reference dot
+  # is always visible.
+  mod_for_nash <- FITNESS_MODELS[[model_name]]
+  nash_pt      <- find_nash(model_name)
+  w_h_nash     <- mod_for_nash$fH(nash_pt$v, nash_pt$s)
+  w_p_nash     <- mod_for_nash$fP(nash_pt$v, nash_pt$s)
+  pooled_fit   <- all_rep_data %>%
+    filter(is.finite(hostFit), is.finite(pathFit))
+  hi_h <- max(quantile(pooled_fit$hostFit, 0.99, na.rm = TRUE),
+              w_h_nash) * 1.10
+  hi_p <- max(quantile(pooled_fit$pathFit, 0.99, na.rm = TRUE),
+              w_p_nash) * 1.10
+  # Round up to the nearest 0.1 so axis breaks land on nice tenths.
+  hi_shared <- ceiling(max(hi_h, hi_p) * 10) / 10
+  fit_lims  <- c(0, hi_shared)
+
+  fit_panels <- lapply(seq_along(cond_names), function(ci) {
+    d <- scen_dfs[[ci]]
+    if (is.null(d) || nrow(d) == 0)
+      return(ggplot() + theme_void())
+    hex_fitness_panel(d, model_name = model_name, nbins = nbins,
+                      show_x = TRUE, show_y = (ci == 1),
+                      x_lims = fit_lims, y_lims = fit_lims,
+                      show_legend = (ci == 1))
+  })
+
+  panels <- c(trait_panels, fit_panels)
+  out <- wrap_plots(panels, ncol = 4, byrow = TRUE) +
+    plot_annotation(tag_levels = "A") &
+    .tag_theme &
+    theme(plot.margin = margin(14, 14, 6, 18))
+
+  if (!is.null(filename)) {
+    safe_ggsave(paste0("figures/", filename, ".pdf"), out,
+                width = width, height = height)
+    safe_ggsave(paste0("figures/", filename, ".png"), out,
+                width = width, height = height, dpi = 300)
+    cat("Saved:", filename, "\n")
+  }
+  out
+}
+
+
+# ============================================================================
+# SUPPLEMENTARY — Full time-series grid (was Fig 2 before density rewrite)
+# 6 rows (v, c, W_P, W_H, omega_P, omega_H) x 4 scenarios.
+# ============================================================================
+fig_supp_timeseries <- function(model_name = "minimal",
+                                sigma = 0.01, diploid = TRUE,
+                                tag_prefix = "final",
+                                max_pts = 2000,
+                                filename = "FigS_timeseries",
+                                width = 11, height = 12) {
+
+  out <- fig_timeseries(model_name = model_name, filename = NULL,
+                        sigma = sigma, diploid = diploid,
+                        tag_prefix = tag_prefix, max_pts = max_pts,
+                        width = width, height = height) +
+    plot_annotation(title = "")
+
+  if (!is.null(filename)) {
+    safe_ggsave(paste0("figures/", filename, ".pdf"), out,
+                width = width, height = height)
+    safe_ggsave(paste0("figures/", filename, ".png"), out,
+                width = width, height = height, dpi = 300)
+    cat("Saved:", filename, "\n")
+  }
+  out
+}
+
+
+# ============================================================================
+# GROUPED FIGURE 3 — MECHANISM
+# ============================================================================
+# A: step-size amplification across scenarios (was S1)
+# B: boundary occupancy across scenarios     (was S2)
+# C: Nash stability regions in trait space with ER/ER trajectory overlay
+#                                              (was S6)
+# D: slope phase space (mS,mV) with stability hyperbolas (was S3)
+#
+# Headline: "Slope drift past |mc·mv| = 1 amplifies realised step sizes
+#            and pushes trajectories to boundaries."
+# ============================================================================
+fig_grouped_3_mechanism <- function(model_name = "minimal",
+                                    sigma = 0.01, diploid = TRUE,
+                                    tag_prefix = "final",
+                                    filename = "Fig3_mechanism",
+                                    width = 13, height = 12) {
+
+  inset_legend <- theme(
+    legend.position = "inside",
+    legend.position.inside = c(0.98, 0.98),
+    legend.justification = c(1, 1),
+    legend.background = element_rect(fill = "white", color = "grey80",
+                                     linewidth = 0.3),
+    legend.key = element_blank(),
+    legend.margin = margin(2, 4, 2, 4),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+  pA <- fig_step_sizes(model_name = model_name,
+                       sigma = sigma, diploid = diploid,
+                       tag_prefix = tag_prefix, filename = NULL) +
+    labs(title = NULL)
+
+  pB <- fig_nash_violation_map(model_name = model_name,
+                               sigma = sigma, diploid = diploid,
+                               tag_prefix = tag_prefix,
+                               resolution = 100, filename = NULL) +
+    labs(title = NULL)
+
+  pC <- fig_slope_distribution(model_name = model_name,
+                               sigma = sigma, diploid = diploid,
+                               tag_prefix = tag_prefix,
+                               title_label = NULL, pct_inline = TRUE,
+                               filename = NULL) +
+    inset_legend +
+    theme(aspect.ratio = 1)
+
+  out <- pA / (pB + pC) +
+    plot_layout(heights = c(1, 1.1)) +
+    plot_annotation(tag_levels = "A") &
+    .tag_theme &
+    theme(plot.margin = margin(14, 14, 6, 18))
+  
+  if (!is.null(filename)) {
+    safe_ggsave(paste0("figures/", filename, ".pdf"), out,
+                width = width, height = height)
+    safe_ggsave(paste0("figures/", filename, ".png"), out,
+                width = width, height = height, dpi = 300)
+    cat("Saved:", filename, "\n")
+  }
+  out
+}
+
+
+# ============================================================================
+# Per-replicate signature scatter (discriminator)
+# ============================================================================
+# One dot per replicate. Both axes are per-replicate median omegas (log scale),
+# host on x, pathogen on y. ER along an axis = elevated omega for that player;
+# the four scenarios occupy distinct quadrants of the (omega_H, omega_P) plane.
+# Used as panel D of Fig 4; also savable on its own.
+# ============================================================================
+fig_discriminator <- function(model_name = "minimal",
+                              sigma = 0.01, diploid = TRUE,
+                              tag_prefix = "final",
+                              filename = "Discriminator") {
+
+  cond_names <- c("EThost_ETpath", "EThost_ERpath",
+                  "ERhost_ETpath", "ERhost_ERpath")
+
+  reps <- load_replicates(model_name, sigma = sigma, diploid = diploid,
+                          conditions = cond_names, tag_prefix = tag_prefix)
+  if (is.null(reps) || nrow(reps) == 0)
+    stop("No replicate data loaded for discriminator")
+
+  # Median in log-space is robust to the long upper tail; finite/positive only.
+  per_rep <- reps %>%
+    mutate(
+      omegaHost = suppressWarnings(as.numeric(omegaHost)),
+      omegaPath = suppressWarnings(as.numeric(omegaPath))
+    ) %>%
+    group_by(scenario, rep) %>%
+    summarise(
+      omega_H = median(omegaHost[is.finite(omegaHost) & omegaHost > 0],
+                       na.rm = TRUE),
+      omega_P = median(omegaPath[is.finite(omegaPath) & omegaPath > 0],
+                       na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    filter(is.finite(omega_H), omega_H > 0,
+           is.finite(omega_P), omega_P > 0)
+
+  p <- ggplot(per_rep, aes(x = omega_H, y = omega_P, color = scenario)) +
+    geom_vline(xintercept = 1, linetype = "dashed", color = "grey60") +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "grey60") +
+    geom_point(size = 3.2, alpha = 0.85, stroke = 0,
+               position = position_jitter(width = 0.05, height = 0.05,
+                                          seed = 1)) +
+    scale_x_log10(labels = trans_format("log10", math_format(10^.x))) +
+    scale_y_log10(labels = trans_format("log10", math_format(10^.x))) +
+    scale_color_condition(name = NULL) +
+    labs(x = expression("median " * omega[H] * " (clearance, per replicate)"),
+         y = expression("median " * omega[P] * " (virulence, per replicate)")) +
+    mytheme +
+    theme(
+      legend.position = "inside",
+      legend.position.inside = c(0.02, 0.98),
+      legend.justification = c(0, 1),
+      legend.background = element_rect(fill = "white", color = "grey80",
+                                       linewidth = 0.3),
+      legend.key = element_blank(),
+      legend.margin = margin(2, 6, 2, 6),
+      legend.text = element_text(size = 11)
+    )
+
+  if (!is.null(filename)) {
+    safe_ggsave(paste0("figures/", filename, ".pdf"), p,
+                width = 7, height = 5)
+    safe_ggsave(paste0("figures/", filename, ".png"), p,
+                width = 7, height = 5, dpi = 300)
+    cat("Saved:", filename, "\n")
+  }
+  p
+}
+
+
+# ============================================================================
+# GROUPED FIGURE 4 — STATISTICAL SIGNATURES
+# ============================================================================
+# A: omega distributions per player x scenario
+# B: dwell time near Nash
+# C: boundary occupancy — fraction of time at edge
+# D: per-replicate discriminator (omega_P vs spectral slope of v)
+#
+# Headline: "ER carries persistent positive selection, hits trait boundaries,
+#            and shows short dwell near Nash; the replicate-level signature
+#            separates ER from ET in a single 2D summary."
+#
+# Supplementary (standalone files): dwell-at-boundary, TS stats
+# (CV/spectral slope/correlation length), time series.
+# ============================================================================
+fig_grouped_4_statistics <- function(model_name = "minimal",
+                                     sigma = 0.01, diploid = TRUE,
+                                     tag_prefix = "final",
+                                     filename = "Fig4_statistics",
+                                     width = 13, height = 10) {
+
+  inset_legend <- theme(
+    legend.position = "inside",
+    legend.position.inside = c(0.98, 0.98),
+    legend.justification = c(1, 1),
+    legend.background = element_rect(fill = "white", color = "grey80",
+                                     linewidth = 0.3),
+    legend.key = element_blank(),
+    legend.margin = margin(2, 4, 2, 4),
+    legend.title = element_text(size = 12),
+    legend.text = element_text(size = 12)
+  )
+
+  pA <- fig_omega(model_name = model_name,
+                  sigma = sigma, diploid = diploid,
+                  tag_prefix = tag_prefix, filename = NULL) +
+    labs(title = NULL)
+
+  pB <- fig_dwell_times(model_name = model_name, region = "nash",
+                        sigma = sigma, diploid = diploid,
+                        tag_prefix = tag_prefix, filename = NULL) +
+    labs(title = NULL)
+
+  pC <- fig_boundary_occupancy(model_name = model_name,
+                               sigma = sigma, diploid = diploid,
+                               tag_prefix = tag_prefix, filename = NULL) +
+    labs(title = NULL) +
+    inset_legend
+
+  pD <- fig_discriminator(model_name = model_name,
+                          sigma = sigma, diploid = diploid,
+                          tag_prefix = tag_prefix, filename = NULL)
+
+  out <- (pA + pB) / (pC + pD) +
+    plot_layout(heights = c(1, 1)) +
+    plot_annotation(tag_levels = "A") &
+    .tag_theme &
+    theme(plot.margin = margin(14, 14, 6, 18))
+
+  if (!is.null(filename)) {
+    safe_ggsave(paste0("figures/", filename, ".pdf"), out,
+                width = width, height = height)
+    safe_ggsave(paste0("figures/", filename, ".png"), out,
+                width = width, height = height, dpi = 300)
+    cat("Saved:", filename, "\n")
+  }
+  out
+}
+
+
+# ============================================================================
+# Convenience: build all four at once
+# ============================================================================
+fig_grouped_all <- function(model_name = "minimal",
+                            sigma = 0.01, diploid = TRUE,
+                            tag_prefix = "final") {
+  fig_grouped_1_setup     (model_name)
+  fig_grouped_2_dynamics  (model_name, sigma = sigma, diploid = diploid,
+                           tag_prefix = tag_prefix)
+  fig_grouped_3_mechanism (model_name, sigma = sigma, diploid = diploid,
+                           tag_prefix = tag_prefix)
+  fig_grouped_4_statistics(model_name, sigma = sigma, diploid = diploid,
+                           tag_prefix = tag_prefix)
+  fig_supp_timeseries     (model_name, sigma = sigma, diploid = diploid,
+                           tag_prefix = tag_prefix)
+  invisible(NULL)
+}
+
+
+
+fig_grouped_all(model_name = "minimal",
+                sigma = 0.01, diploid = TRUE,
+                tag_prefix = "final")
