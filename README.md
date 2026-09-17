@@ -2,213 +2,227 @@
 
 Host–pathogen coevolution simulator based on the Goldstein et al. framework for punctuated evolutionary dynamics.
 
-This model investigates how the evolution of conditional response strategies (evolved rules, ER) versus fixed trait values (evolved traits, ET) shapes the long-term dynamics of host–pathogen coevolution. The simulator implements a continuous-time Markov jump process under a strong selection, weak mutation regime, comparing four experimental conditions: **ET–ET**, **ET–ER**, **ER–ET**, and **ER–ER**.
+The model asks how evolving **conditional response rules** (evolved rules, ER) rather than **fixed trait values** (evolved traits, ET) shapes long-term host–pathogen coevolution. Host clearance *c* and pathogen virulence *v* evolve by a continuous-time Markov jump process under strong selection and weak mutation (SSWM), with Kimura fixation probabilities. Four scenarios cross the two strategy types: **ET/ET**, **ET host / ER path**, **ER host / ET path** and **ER/ER**.
 
-This code is based on the original Java code written by J. Goldstein, and the original paper draft.
+The code is based on J. Goldstein's original Java implementation (`Simulate.java`, kept for reference) and the original paper draft.
 
-## Repository Structure
+
+## Repository layout
 
 ```
 GoldsteinGameTheory/
-├── simulation.py          # Core simulation engine
-├── run_experiments.py     # CLI experiment runner
-├── Plots.R                # Visualization and analysis (all figures)
-├── figures/               # Generated figures (PDF + PNG)
-├── results/               # Simulation output (generated)
-│   └── {fitness_model}/
-│       └── {condition}[_tags]/
-│           ├── simulation.csv
-│           └── config.json
-└── README.md
+├── simulation.py            # Simulation engine (importable module)
+├── run_experiments.py       # CLI: configure and launch runs
+├── timeshift.py             # Time-shift (cross-inoculation) assay on stored runs
+├── scripts/                 # Launchers that reproduce every simulation in the manuscript
+│   ├── run_main.sh
+│   ├── run_tracking_sweep.sh
+│   ├── run_tempo_sweep.sh
+│   ├── run_zoom.sh
+│   └── run_timeshift.sh
+├── Plots.R                  # Plotting and analysis helpers (definitions only)
+├── timeshift_plots.R        # Plotting helpers for the time-shift assay (Fig 5)
+├── manuscript_figures.R     # Builds every manuscript figure from the helpers
+├── results/                 # Main runs, tracking sweep, time-shift summaries
+│   ├── minimal/  acute/  tracking/     # one directory per run
+│   └── timeshift/                      # CSV summaries from timeshift.py
+├── results_gamma/           # Tempo sweep (N_H = N_P)
+├── results_zoom/            # Runs that record every substitution
+├── figures/                 # Manuscript figures (PDF + PNG)
+└── Simulate.java            # Original Java implementation (reference only)
 ```
 
-
-## Files
-
-### `simulation.py` — Core Engine
-
-Contains all model architecture, classes, and functions. Designed as an importable module used by `run_experiments.py`.
-
-- **Fitness models:** Acute infection (`fH = s/(s+d)`, `fP = v^β/(s+d)`), chronic infection (immunity-modulated virulence), minimal polynomial (`wH = c(1−c)(1−v)`, `wP = v(1−v)(1−c)`), and Taylor et al. 2006 (`H = [c/(v+c)]·[b/(m₀+c)]`, `P = vⁿ/(v+c)`)
-- **`Simulation` class:** Manages evolutionary state, mutation proposals (equal-probability Gaussian quantile bins), selection via Kimura fixation probabilities (haploid or diploid), and the continuous-time substitution clock
-- **Gillespie dynamics:** Each generation evaluates all mutations for both players, computes cumulative substitution rates weighted by mutation asymmetry (γ), chooses who mutates proportional to total rate, and draws exponential dwell time
-- **Equilibrium solving:** Computes interior and boundary intersections of linear response strategies for ER scenarios, with 2-cycle fallback for unstable cases
-- **`set_fitness_model()`:** Switches active fitness functions and adjusts trait domain (e.g., `[0,1]` for acute/minimal, `[0.001, 20]` for Taylor)
-
-**Notation mapping (paper → code):**
-
-| Paper | Code | Description |
-|-------|------|-------------|
-| ET (Evolved Trait) | EI / `evolved_strategy=False` | Fixed traits |
-| ER (Evolved Response) | ES / `evolved_strategy=True` | Linear reaction norms |
-| *c* (clearance) | `s` | Host immune clearance |
-| *v* (virulence) | `v` | Pathogen virulence |
-| *m_c*, *m_v* | `mS`, `mV` | Response slopes |
-| *c₀*, *v₀* | `bS`, `bV` | Response intercepts |
-| *W_H*, *W_P* | `hostFit`, `pathFit` | Host/pathogen fitness |
-| γ | `prob_host_mutate` | Mutation rate asymmetry |
-
-### `run_experiments.py` — Experiment Runner
-
-CLI tool that configures and launches simulation runs across conditions. Sets `simulation.py` globals via `importlib` and manages output directory structure.
-
-- **Condition control:** Maps `EThost_ETpath`, `EThost_ERpath`, `ERhost_ETpath`, `ERhost_ERpath` to the appropriate reactivity toggles
-- **Fitness model selection:** `--fitness {acute, chronic, minimal, taylor}`
-- **Runtime modes:** `--quick` (10K generations), custom `--gens N`, or default full (1M generations)
-- **Mutation asymmetry:** `--gamma 0.01` (pathogen-fast, default), `--gamma 0.5` (equal), `--gamma 0.99` (host-fast)
-- **Gamma sweeps:** `--gamma-sweep 0.01,0.1,0.5,0.9,0.99` runs all specified γ values across conditions
-- **Nash dwell sweeps:** `--nash-sweep` runs parameter sweeps (σ, N, nS, nV) for weak Nash dwell analysis
-- **Step-size sweeps:** `--step-sizes 0.01,0.05,0.2,0.5`
-- **Diploid Kimura:** `--diploid` switches fixation probability to 4Ns denominator
-- **Trait pinning:** `--fix-host 0.5` or `--fix-path 0.3` locks one player's trait
-- **Population size:** `--pop-size N` overrides HOST_POP_N (PATH_POP_N scales to 100×)
-- **Cost parameters:** `--nS` and `--nV` override clearance and virulence costs
-- **Replicates:** `--rep N` offsets seed by N−1, tags output directory with `repN`
-- **Tags:** `--tag name` appends to output directory (e.g., `--tag final_r1` for replicate tracking)
-- **Mutation bins:** `--bins 11` reduces from default 51 for faster test runs
-- **Reproducibility:** Saves full configuration to `config.json` per run
-
-**Output directory naming:** `{condition}[_sigma{σ}][_diploid][_gamma{γ}][_fixH{v}][_fixP{v}][_N{n}][_rep{n}][_tag]/`
-
-### `Plots.R` — Visualization
-
-R script for generating all publication figures. Requires `tidyverse`, `ggplot2`, `patchwork`, `pracma`, `scales`, and `zoo`.
-
-**Data loading:**
-- `discover_experiments()` — Auto-scans `results/` for all `config.json` files, builds a cached catalog
-- `load_sim()` — Loads a single experiment by model + scenario with automatic best-match selection
-- `load_all_conditions()` — Loads all 4 conditions for one model into a single data frame
-- `load_replicates()` — Loads replicate runs via `tag_prefix` matching (e.g., `"final_r"` finds `final_r1`, `final_r2`, `final_r3`)
-
-**Figure functions:**
-
-| Section | Function | Description |
-|---------|----------|-------------|
-| §4 | `fig_landscape` | Fitness landscape contour plots with best-response curves |
-| §5 | `fig_strategy_panels` | Strategy line configurations at different slopes |
-| §6 | `fig_timeseries` | 6×N grid: v, c, W_P, W_H, ω_P, ω_H across conditions |
-| §7 | `fig_hex_combined` | Phase-space hexbin density on fitness landscapes |
-| §8 | `fig_snapshots` | Strategy-line snapshots at different generations |
-| §9 | `fig_nash_combined` | Nash violation map + slope stability distribution |
-| §10 | `fig_strategy_evolution` | ER parameter (bS, mS, bV, mV) time series |
-| §11 | `fig_ts_stats` | CV, spectral slope, correlation length distributions |
-| §11 | `fig_acf_decay` | Autocorrelation function decay |
-| §12 | `fig_step_sizes` | Mutational step-size distributions |
-| §13 | `fig_neutral_drift` | Neutral mutation fraction analysis |
-| §14 | `fig_dwell_times` | Dwell-time distributions in Nash/stable/boundary regions |
-| §14 | `fig_boundary_occupancy` | Boundary occupancy fractions |
-| §14 | `fig_trait_density` | 2D trait distributions with Nash overlay |
-| §11 | `fig_gamma_*` | Gamma sweep analysis (timeseries, summary, symmetry, tempo, ACF) |
-| — | `fig_replicate_timeseries` | Replicate overlay (v, c time series) |
-| — | `fig_replicate_density` | Replicate trait distribution comparison |
-
-**Replicate support:** Most figure functions accept `tag_prefix` to automatically load and overlay/pool replicates:
-```r
-# Single run
-fig_timeseries("minimal", "ts_single", sigma = 0.01, diploid = TRUE,
-               tag_filter = "final_r1")
-
-# Overlay 3 replicates as colored semi-transparent lines
-fig_timeseries("minimal", "ts_reps", sigma = 0.01, diploid = TRUE,
-               tag_prefix = "final_r")
-
-# Pool replicates for density estimation
-fig_trait_density("minimal", sigma = 0.01, diploid = TRUE,
-                  tag_prefix = "final_r")
-```
+Simulation output and figures are git-ignored; they are regenerated by the steps below.
 
 
-## Quick Start
+## Requirements
 
-### 1. Run simulations (Python 3.8+, scipy optional)
+- **Python 3**, standard library only (tested with 3.14). `scipy` is optional: without it the mutation quantile bins fall back to linearly spaced z-scores.
+- **R** with `tidyverse`, `ggplot2` ≥ 4.0, `patchwork`, `pracma`, `scales`, `zoo` and `jsonlite` (tested with R 4.6, ggplot2 4.0.3, patchwork 1.3.2).
+
+Run every command from the repository root.
+
+
+## Reproducing the manuscript
+
+### 1. Simulations
+
+Every launcher runs jobs in parallel (`JOBS=…`), writes one log per run to `logs/`, and uses deterministic seeds (`seed_base + rep − 1`). All runs are diploid with mutation step size σ = 0.01.
+
+| Script | Output | Design | Used in |
+|---|---|---|---|
+| `scripts/run_main.sh` | `results/minimal/`, `results/acute/` | 2 models × 4 scenarios × 4 reps; 100K substitutions after 10K burn-in, one row per 10 | Fig 2–4, S1, S3–S6, S10–S11 |
+| `scripts/run_tracking_sweep.sh` | `results/tracking/` | *k* ∈ {0, 0.5, 1, 1.5, 2, 3, 4} × 4 scenarios × 8 reps; 10K substitutions after 10K burn-in | S8–S9 |
+| `scripts/run_tempo_sweep.sh` | `results_gamma/` | γ ∈ {10⁻⁴, 10⁻², 0.5} × 3 scenarios × 4 reps, N_H = N_P = 10⁴; 10K after 10K burn-in | Fig 4D–E, S7 |
+| `scripts/run_zoom.sh` | `results_zoom/` | minimal model, 4 scenarios × 8 reps; 10K substitutions, every one recorded | Fig 4C, S2, Fig 5 |
+
+ER/ER runs are by far the slowest: each ER player evaluates 51 × 51 candidate rules per substitution, against 51 candidate traits for an ET player.
+
+With equal population sizes the tempo ratio R = (1 − γ)N_P / (γN_H) is set by γ alone (R ≈ 10⁴, 10², 1). At R = 1 the two mixed scenarios must mirror each other with *v* and *c* exchanged, which S7 uses as a code check.
+
+### 2. Time-shift summaries (Fig 5)
+
+After the main and zoom runs have finished:
 
 ```bash
-# Quick test — all 4 conditions, acute model (~5–10 min)
-python run_experiments.py --quick
-
-# Full run — all 4 conditions, acute model
-python run_experiments.py
-
-# Single condition with a specific fitness model
-python run_experiments.py --fitness minimal --condition ERhost_ERpath
-
-# Diploid with small step size
-python run_experiments.py -f minimal --diploid --step-sizes 0.01
-
-# Gamma sweep across conditions
-python run_experiments.py -f acute --gamma-sweep 0.01,0.1,0.5,0.9,0.99 --diploid
-
-# Replicates with tagged output
-python run_experiments.py -f minimal --diploid --step-sizes 0.01 --tag final_r1
-python run_experiments.py -f minimal --diploid --step-sizes 0.01 --tag final_r2 --seed 3248233
-python run_experiments.py -f minimal --diploid --step-sizes 0.01 --tag final_r3 --seed 3248234
-
-# List all options
-python run_experiments.py --list
+scripts/run_timeshift.sh main   # results/timeshift/timeshift_main*.csv (panels D–E)
+scripts/run_timeshift.sh zoom   # results/timeshift/timeshift_zoom*.csv (panels A–C)
 ```
 
-### 2. Generate figures (R)
+### 3. Figures
+
+```bash
+Rscript manuscript_figures.R              # all 16 figures -> figures/
+Rscript manuscript_figures.R fig3 figS8   # selected figures
+```
+
+If several large PDFs in one R session hit an intermittent "write failed" error, build each figure in its own process: `for f in fig1 fig2 fig3; do Rscript manuscript_figures.R $f; done`.
+
+| Figure | Content | Data |
+|---|---|---|
+| `fig1` | Model: fitness landscapes and response-rule geometry | analytical |
+| `fig2` | Time series of *v*, *c*, W_P, W_H, four scenarios | `results/minimal` |
+| `fig3` | Mechanism of destabilisation: neutral fraction, genotype/phenotype ratio, own vs opponent-induced step sizes, slope phase space, Nash violation map, time-weighted state occupancy | `results/minimal` |
+| `fig4` | Selection and tempo: ω/2N distributions and per-replicate medians, aligned zoom, tempo sweep | `results/minimal`, `results_zoom`, `results_gamma` |
+| `fig5` | Time-shift assay | `results/timeshift` |
+| `figS1` | Trait and fitness density hexbins | `results/minimal` |
+| `figS2` | Time series, first 1,000 substitutions | `results_zoom` |
+| `figS3` | Time-series statistics (mean, SD, spectral slope, correlation length) | `results/minimal` |
+| `figS4` | Response-rule snapshots, ER/ER | `results/minimal` |
+| `figS5` | Response-rule parameter time series, ER/ER | `results/minimal` |
+| `figS6` | ω/2N time series, full runs | `results/minimal` |
+| `figS7` | Tempo symmetry check at R = 1 | `results_gamma` |
+| `figS8` | Tracking sweep: virulence SD, corr(W_H, W_P), ER-host fitness relative to ET/ET | `results/tracking` |
+| `figS9` | Tracking-model ER/ER time series per *k* | `results/tracking` |
+| `figS10` | Acute-model time series | `results/acute` |
+| `figS11` | Acute-model diagnostics (analogues of Fig 3C, 3F, 4B) | `results/acute` |
+
+
+## Code
+
+### `simulation.py`
+
+- **Fitness models:** acute, chronic, minimal, Taylor et al. (2006) and tracking (see the table below). `set_fitness_model()` switches the active functions and trait domain.
+- **`Simulation` class:** evolutionary state, mutation proposals (equal-probability Gaussian quantile bins), selection by Kimura fixation probability (haploid or diploid), and the continuous-time substitution clock.
+- **Gillespie dynamics:** at each step every candidate mutation of both players is scored. The player that substitutes is chosen in proportion to its total rate, weighted by the mutation asymmetry γ. The dwell time is exponential.
+- **Equilibria:** for ER players, the realised traits are the mutual fixed point of the two linear response rules. The solver handles interior and boundary intersections and falls back to a 2-cycle when the fixed point is unstable.
+
+**Notation (paper → code):**
+
+| Paper | Code | Description |
+|---|---|---|
+| ET (evolved trait) | `evolved_strategy=False` | Fixed trait |
+| ER (evolved response rule) | `evolved_strategy=True` | Linear reaction norm |
+| *c* | `s` | Host clearance |
+| *v* | `v` | Pathogen virulence |
+| *c₀*, *m_c* | `bS`, `mS` | Host rule intercept and slope, *c* = *c₀* + *m_c* *v* |
+| *v₀*, *m_v* | `bV`, `mV` | Pathogen rule intercept and slope, *v* = *v₀* + *m_v* *c* |
+| W_H, W_P | `hostFit`, `pathFit` | Host and pathogen fitness |
+| ω_H, ω_P | `omegaHost`, `omegaPath` | Substitution rate, 2N·P_fix (ceiling 2N) |
+| γ | `prob_host_mutate` | Probability that a mutation arises in the host |
+
+**Fixation probability.** For a strongly beneficial mutation, `kimura_fixation_prob` returns the limit 1 − e^(−2s). An earlier version returned the small-*s* approximation 2*s*. That approximation is unbounded, and with *s* measured against a near-zero-fitness resident it let P_fix exceed 1 and ω exceed its 2N ceiling. Every run and figure in this repository was produced with the corrected function.
+
+### `run_experiments.py`
+
+Command-line runner. It sets the `simulation.py` globals, names the output directory and saves the full configuration to `config.json`.
+
+```bash
+python3 run_experiments.py --list                                    # models and scenarios
+python3 run_experiments.py -f minimal -c ERhost_ERpath --diploid \
+    --step-sizes 0.01 --rep 1 --gens 100000 --write-every 10         # one main run
+python3 run_experiments.py -f minimal --diploid --gens 1000 --bins 11 \
+    --tag test -o scratch                                            # quick test
+```
+
+| Flag | Description |
+|---|---|
+| `-f/--fitness` | `acute` (default), `chronic`, `minimal`, `taylor`, `tracking` |
+| `-c/--condition` | One scenario (default: all four) |
+| `--gens N`, `--quick` | Recorded substitutions (default 1M; `--quick` = 10K) |
+| `--burn-in N` | Burn-in before recording (default 10K, but `--gens` alone shrinks it to gens/10) |
+| `--write-every N` | Record every Nth substitution (default 100) |
+| `--step-sizes σ[,σ…]` | Mutation step size(s) |
+| `--diploid` | Diploid semi-dominant fixation (4Ns) instead of haploid (2Ns) |
+| `--gamma γ`, `--gamma-sweep γ,…` | Mutation asymmetry (default 0.01) |
+| `--pop-size N`, `--path-pop-size N` | Host N (pathogen defaults to 100× host); pathogen N independently |
+| `--k k` | Tracking strength for the `tracking` model (0 = minimal) |
+| `--rep N` | Replicate: offsets the seed by N − 1 and tags the directory `repN` |
+| `--tag name`, `-o dir` | Directory tag; output root (default `results`) |
+| `--fix-host x`, `--fix-path x` | Pin one player's trait |
+| `--nS`, `--nV` | Clearance and virulence cost parameters |
+| `--bins N` | Mutation quantile bins (default 51; 11 is ~20× faster for tests) |
+| `--seed`, `--nash-sweep` | Seed override; Nash-dwell parameter sweep |
+
+Output directories are named `{condition}[_sigma{σ}][_diploid][_gamma{γ}][_fixH{x}][_fixP{x}][_N{n}][_NP{n}][_nS{x}][_nV{x}][_k{k}][_rep{n}][_tag]/` (γ is omitted at its default 0.01).
+
+### `timeshift.py`
+
+Challenges one antagonist from time *t* against the other from time *t* + Δ, contrasting same-lineage (sympatric) with different-lineage (allopatric) pairings (Gaba & Ebert 2009). No re-simulation is needed. The **phenotype** protocol crosses stored realised traits. The **rule** protocol crosses response rules and re-solves the fixed point. See the module docstring and `python3 timeshift.py --help`.
+
+### `Plots.R`, `timeshift_plots.R`, `manuscript_figures.R`
+
+`Plots.R` and `timeshift_plots.R` only define functions. `manuscript_figures.R` sources them and holds one short function per figure. The loaders in `Plots.R` discover runs from their `config.json`, so no paths are hard-coded. Point them at another tree with `options(ggt.results_root = "…")`, or pass `results_root =` to a figure function.
 
 ```r
 source("Plots.R")
+fig_timeseries("minimal", sigma = 0.01, diploid = TRUE, replicates = TRUE,
+               highlight_rep = 1, show_omega = FALSE)
 ```
 
-Reads simulation CSVs from `results/` and assembles multi-panel figures using `patchwork`. Call `refresh_catalog()` after running new simulations. Use `list_experiments()` to see all discovered runs.
 
+## Scenarios and fitness models
 
-## Experimental Conditions
-
-| Condition | Host | Pathogen | Expected Dynamics |
-|-----------|------|----------|-------------------|
-| **EThost_ETpath** | Fixed trait *c* | Fixed trait *v* | Stable convergence to Nash equilibrium |
-| **EThost_ERpath** | Fixed trait *c* | Linear rule *v(c) = v₀ + m_v · c* | Intermediate volatility |
-| **ERhost_ETpath** | Linear rule *c(v) = c₀ + m_c · v* | Fixed trait *v* | Intermediate volatility |
-| **ERhost_ERpath** | Linear rule *c(v)* | Linear rule *v(c)* | Punctuated equilibrium dynamics |
-
-
-## Fitness Models
+| Scenario | Host | Pathogen |
+|---|---|---|
+| `EThost_ETpath` | Fixed trait *c* | Fixed trait *v* |
+| `EThost_ERpath` | Fixed trait *c* | Rule *v* = *v₀* + *m_v* *c* |
+| `ERhost_ETpath` | Rule *c* = *c₀* + *m_c* *v* | Fixed trait *v* |
+| `ERhost_ERpath` | Rule *c*(*v*) | Rule *v*(*c*) |
 
 | Model | Host fitness | Pathogen fitness | Trait domain |
-|-------|-------------|-----------------|--------------|
-| **acute** | *s / (s + d)* | *v^β / (s + d)* | [0, 1] |
-| **chronic** | *1 / d*, immunity modulates virulence | *(1−s) · v^β / d* | [0, 1] |
-| **minimal** | *c(1−c)(1−v)* | *v(1−v)(1−c)* | [0, 1] |
-| **taylor** | *[c/(v+c)] · [b/(m₀+c)]* | *vⁿ / (v+c)* | [0.001, 20] |
+|---|---|---|---|
+| **minimal** | *c*(1−*c*)(1−*v*) | *v*(1−*v*)(1−*c*) | [0, 1] |
+| **acute** | *c* / (*c* + *d*) | *v*^β / (*c* + *d*) | [0, 1] |
+| **tracking** | *c*(1−*c*)(1−*v*) + *k c*²(1−*c*)*v* | *v*(1−*v*)(1−*c*) + *k v*²(1−*v*)*c* | [0, 1] |
+| chronic | 1 / *d*, immunity modulates virulence | (1−*c*) *v*^β / *d* | [0, 1] |
+| taylor | [*c*/(*v*+*c*)] · [*b*/(*m₀*+*c*)] | *v*ⁿ / (*v*+*c*) | [0.001, 20] |
+
+*d* is the mortality function of each model. The tracking model reduces exactly to the minimal model at *k* = 0. The manuscript uses minimal (main text), acute and tracking (SI).
 
 
-## Key Parameters
+## Key parameters
 
 | Parameter | Default | CLI flag | Description |
-|-----------|---------|----------|-------------|
-| `std_dev_move` (σ) | 0.1 | `--step-sizes` | Mutation step size |
-| `prob_host_mutate` (γ) | 0.01 | `--gamma` | Host mutation probability per event (~1:99 ratio) |
-| `HOST_POP_N` | 10⁴ | `--pop-size` | Effective host population size |
-| `PATH_POP_N` | 10⁶ | (100× host) | Effective pathogen population size |
-| `nS` / `n_c` | 0.1 | `--nS` | Host cost-of-clearance scaling |
-| `nV` / `n_v` | 1.0 | `--nV` | Pathogen cost-of-virulence scaling |
-| `d₀` | 0.1 | — | Baseline mortality |
-| `β` | 1.0 | — | Transmission–virulence exponent |
-| `max_gens` | 10⁶ | `--gens` | Total generations after burn-in |
-| `DIPLOID_KIMURA` | False | `--diploid` | Use 4Ns (diploid) vs 2Ns (haploid) fixation |
-| `num_step_bins` | 51 | `--bins` | Mutation quantile bins (51² = 2601 ER candidates/player) |
+|---|---|---|---|
+| `std_dev_move` (σ) | 0.1 | `--step-sizes` | Mutation step size (manuscript: 0.01) |
+| `prob_host_mutate` (γ) | 0.01 | `--gamma` | Share of mutations arising in the host |
+| `HOST_POP_N` | 10⁴ | `--pop-size` | Host effective population size |
+| `PATH_POP_N` | 10⁶ | `--path-pop-size` | Pathogen effective population size |
+| `DIPLOID_KIMURA` | False | `--diploid` | Diploid fixation (manuscript: True) |
+| `nS_HLP` / `nV_HLP` | 0.1 / 1.0 | `--nS` / `--nV` | Clearance / virulence cost |
+| `TRACKING_K` (*k*) | 0 | `--k` | Tracking strength (`tracking` model only) |
+| `num_step_bins` | 51 | `--bins` | Mutation quantile bins (51² candidates per ER player) |
 
 
-## Output Files
+## Output files
 
-Each run produces a directory at `results/{fitness_model}/{condition}[_tags]/` containing:
+Each run directory contains:
 
-- **`simulation.csv`** — Per-substitution trajectory: evolutionary time, traits (*v*, *s*), strategy parameters (*bS*, *mS*, *bV*, *mV*), fitness values, omega (ω = substitution rate), mutator identity, mutation selection coefficient, Nash equilibrium status, and dwell times. Each recorded generation has a `pre` and `post` row.
+- **`config.json`:** the full configuration, including scenario, model, population sizes, step size, γ, *k*, replicate, seeds and run length.
+- **`simulation.csv`:** the trajectory. Each recorded substitution writes two rows. The `pre` row holds the state before the substitution and the `post` row the state after, so post − pre is exactly one substitution. Burn-in is not written. Main columns:
+  - `gen`: substitution count.
+  - `time`: evolutionary (continuous) time.
+  - `dwell` (post rows): time spent in the pre-substitution state.
+  - `mutator`: which player substituted, `host` or `path`.
+  - `v`, `s`: realised traits.
+  - `bV`, `mV`, `bS`, `mS`, `vAngle`, `sAngle`: rule parameters.
+  - `pathFit`, `hostFit`: fitness.
+  - `omegaPath`, `omegaHost`: substitution rates.
+  - `mutSelCoeff`, `mutClass`: the substitution's selection coefficient and class.
+  - `nash`, `stableFP`, `hostLineMax`, `pathLineMax`: equilibrium diagnostics.
 
-- **`config.json`** — Full run configuration: condition, fitness model, reactivity toggles, population sizes, mutation parameters, random seed, timestamp, and all overrides.
-
-
-## Performance Notes
-
-- **ET/ET** runs are fast (~seconds per 1M generations): 51 mutations/player, direct fitness evaluation
-- **ER conditions** are slower: 51×51 = 2,601 candidates per ER player, each requiring equilibrium solving
-- **Small σ** (e.g., 0.01) with ER can take 1–3 days per condition at 1M generations
-- Use `--bins 11` for ~20× faster test runs (11² = 121 ER candidates vs 2,601)
-- Use `--gens 10000 --tag test` for quick parameter checks without overwriting production data
+Because `gen` counts substitutions, the same number of substitutions spans very different evolutionary time across scenarios. Over 100K substitutions in the minimal model, ET/ET covers roughly 10⁴ times more time than ER/ER.
 
 
 ## Citation

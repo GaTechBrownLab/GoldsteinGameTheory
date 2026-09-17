@@ -10,10 +10,12 @@ Runs all 4 experimental conditions with clear output naming:
   - ERhost_ERpath: Both reactive (ES mode)
 
 Output structure:
-  results/{FITNESS_MODEL}/{CONDITION}/
+  results/{FITNESS_MODEL}/{CONDITION}[_tags]/
     simulation.csv      # Full trajectory
     config.json         # Run parameters
-    
+
+The manuscript runs are launched by the scripts in scripts/ (see README).
+
 Usage:
   python run_experiments.py                           # All conditions, acute model
   python run_experiments.py --fitness minimal         # All conditions, minimal model  
@@ -42,7 +44,7 @@ CONDITIONS = {
     "ERhost_ERpath": (True,  True),   # ES mode - both reactive
 }
 
-FITNESS_MODELS = ["acute", "chronic", "minimal", "taylor"]
+FITNESS_MODELS = ["acute", "chronic", "minimal", "taylor", "tracking"]
 
 DEFAULT_PARAMS = {
     "max_gens": 1_000_000,
@@ -76,8 +78,10 @@ def run_single_condition(
     rep: int = None,
     tag: str = None,
     pop_size: int = None,
+    path_pop_size: int = None,
     nS: float = None,
     nV: float = None,
+    k: float = None,
 ) -> str:
     """Run a single experimental condition.
 
@@ -130,10 +134,14 @@ def run_single_condition(
         tags.append(f"fixP{fix_path_trait}")
     if pop_size is not None:
         tags.append(f"N{pop_size}")
+    if path_pop_size is not None:
+        tags.append(f"NP{path_pop_size}")
     if nS is not None:
         tags.append(f"nS{nS}")
     if nV is not None:
         tags.append(f"nV{nV}")
+    if k is not None:
+        tags.append(f"k{k}")
     if rep is not None:
         tags.append(f"rep{rep}")
     if tag is not None:
@@ -176,10 +184,15 @@ def run_single_condition(
     if pop_size is not None:
         sim.HOST_POP_N = pop_size
         sim.PATH_POP_N = pop_size * 100
+    if path_pop_size is not None:
+        # Decouples the pathogen from the 100x rule, e.g. N_H = N_P for tempo tests
+        sim.PATH_POP_N = path_pop_size
     if nS is not None:
         sim.nS_HLP = nS
     if nV is not None:
         sim.nV_HLP = nV
+    if k is not None:
+        sim.TRACKING_K = k
     sim.max_gens = params["max_gens"]
     sim.burn_in_gens = params["burn_in_gens"]
     
@@ -209,6 +222,7 @@ def run_single_condition(
         "PATH_POP_N": sim.PATH_POP_N,
         "nS_HLP": sim.nS_HLP,
         "nV_HLP": sim.nV_HLP,
+        "TRACKING_K": sim.TRACKING_K,
         "prob_host_mutate": sim.prob_host_mutate,
         "FIX_HOST_TRAIT": fix_host_trait if fix_host_trait is not None else False,
         "FIX_PATH_TRAIT": fix_path_trait if fix_path_trait is not None else False,
@@ -249,6 +263,8 @@ def run_single_condition(
         print(f"  Host trait cost (nS): {sim.nS_HLP}")
     if nV is not None:
         print(f"  Pathogen virulence cost (nV): {sim.nV_HLP}")
+    if k is not None:
+        print(f"  Tracking strength (k): {sim.TRACKING_K}")
     if rep is not None:
         print(f"  Replicate: {rep}  (seed: {effective_seed})")
     print(f"  Output: {output_csv}")
@@ -283,8 +299,10 @@ def run_all_conditions(
     rep: int = None,
     tag: str = None,
     pop_size: int = None,
+    path_pop_size: int = None,
     nS: float = None,
     nV: float = None,
+    k: float = None,
 ) -> dict:
     """Run all 4 conditions for a fitness model."""
     results = {}
@@ -304,8 +322,10 @@ def run_all_conditions(
             rep=rep,
             tag=tag,
             pop_size=pop_size,
+            path_pop_size=path_pop_size,
             nS=nS,
             nV=nV,
+            k=k,
         )
         results[condition] = output_csv
 
@@ -540,13 +560,23 @@ Quick test (won't touch production results):
                         help="Number of mutation step bins (default 51). Use 11 for ~20x faster test runs.")
     parser.add_argument("--pop-size", type=int, default=None,
                         help="Override HOST_POP_N (PATH_POP_N = 100× host)")
+    parser.add_argument("--path-pop-size", type=int, default=None,
+                        help="Override PATH_POP_N independently of --pop-size "
+                             "(e.g. equal to HOST_POP_N for tempo-parity runs)")
     parser.add_argument("--nS", type=float, default=None,
                         help="Override host trait cost (nS_HLP)")
     parser.add_argument("--nV", type=float, default=None,
                         help="Override pathogen virulence cost (nV_HLP)")
+    parser.add_argument("--k", type=float, default=None,
+                        help="Tracking strength for the 'tracking' fitness model (0=minimal)")
     parser.add_argument("--nash-sweep", action="store_true",
-                        help="Run all 4 parameter sweeps for weak Nash dwell analysis (48 runs)")
-
+                        help="Run all 4 parameter sweeps for weak Nash dwell analysis (48 runs)")    
+    parser.add_argument("--write-every", type=int, default=None,
+                        help="Record every Nth substitution (1 = every mutation)")
+    parser.add_argument("--burn-in", type=int, default=None,
+                        help="Burn-in generations before recording starts. Overrides the "
+                             "default, which --gens otherwise shrinks to gens//10 — short "
+                             "runs need the full burn-in to start from a stationary state.")
     args = parser.parse_args()
     
     if args.list:
@@ -567,6 +597,8 @@ Quick test (won't touch production results):
     if args.gens is not None:
         params["max_gens"] = args.gens
         params["burn_in_gens"] = min(params["burn_in_gens"], args.gens // 10)
+    if args.burn_in is not None:
+        params["burn_in_gens"] = args.burn_in
     
     sim = importlib.import_module("simulation")
     if args.bins is not None:
@@ -586,6 +618,9 @@ Quick test (won't touch production results):
     gammas = None
     if args.gamma_sweep:
         gammas = [float(x.strip()) for x in args.gamma_sweep.split(",")]
+
+    if args.write_every is not None:
+        params["write_every"] = args.write_every
     
     print(f"\n{'#'*60}")
     print(f"# Goldstein Coevolution Experiment Runner")
@@ -661,8 +696,10 @@ Quick test (won't touch production results):
                     rep=args.rep,
                     tag=args.tag,
                     pop_size=args.pop_size,
+                    path_pop_size=args.path_pop_size,
                     nS=args.nS,
                     nV=args.nV,
+                    k=args.k,
                 )
             else:
                 results = run_all_conditions(
@@ -677,8 +714,10 @@ Quick test (won't touch production results):
                     rep=args.rep,
                     tag=args.tag,
                     pop_size=args.pop_size,
+                    path_pop_size=args.path_pop_size,
                     nS=args.nS,
                     nV=args.nV,
+                    k=args.k,
                 )
                 print(f"\n{'='*60}")
                 print("COMPLETE - Output files:")

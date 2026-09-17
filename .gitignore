@@ -60,16 +60,31 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 
-#data files 
+# simulation output, logs and figures (regenerated; see README)
 results/
-diagnostics/
+results_gamma/
+results_zoom/
+logs/
 figures/
+diagnostics/
 postproc/
+_superseded/
+
+# safety net: data and rendered output are never committed, wherever they are
+# written (e.g. run_experiments.py -o scratch, or a figure saved elsewhere)
+*.csv
+*.tsv
+*.rds
+*.rda
+*.pdf
+*.png
+*.log
 
 # vs code
 .vscode/
 
-# old files 
+# old files
 old/
 
-.gitignore
+# Claude Code local settings
+.claude/

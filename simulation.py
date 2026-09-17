@@ -98,6 +98,11 @@ nS_HLP = 0.1
 nV_HLP = 1
 eps_HLP = 1e-3
 ONE_PLUS_EPS_HLP = 1.0 + eps_HLP
+
+# --- Tracking model (minimal + best-response tracking term) ---
+# W_H = c(1-c)(1-v) + k*c^2(1-c)*v ;  W_P = v(1-v)(1-c) + k*v^2(1-v)*c
+# k=0 recovers the minimal model exactly.
+TRACKING_K = 0.0
 beta_HLP = 1.0  # exponent on v in pathogen transmission-like term
 
 # --- Chronic model (Goldstein 2020, §Methods) ---
@@ -196,7 +201,13 @@ def kimura_fixation_prob(scoef: float, N: int) -> float:
     if x > 700:
         return 0.0        # Strongly deleterious
     if x < -700:
-        return 2.0 * scoef  # Strongly beneficial: approx 2s
+        # Strongly beneficial: the denominator 1 - exp(x) -> 1, so the limit is
+        # 1 - exp(-2s), which saturates at 1. The old 2*s approximation is only
+        # valid for small s and is unbounded: with s from a near-zero-fitness
+        # resident (s = (W_mut - W_res)/(W_res + TINY) reaches ~1e11 when
+        # W_res = 0) it returned P_fix >> 1, inflating omega = 2N*P_fix past its
+        # 2N ceiling and distorting the Gillespie rates.
+        return 1.0 - math.exp(-2.0 * scoef)
     denom = 1.0 - math.exp(x)
     if abs(denom) < TINY:
         return 1.0 / (2 * N) if DIPLOID_KIMURA else 1.0 / N
@@ -244,6 +255,14 @@ def _path_minimal(v: float, s: float) -> float:
     # wp = v(1-v)(1-c)
     return v * (1.0 - v) * (1.0 - s)
 
+def _host_tracking(v: float, s: float) -> float:
+    # minimal + tracking term: s(1-s)(1-v) + k*s^2(1-s)*v
+    return s * (1.0 - s) * (1.0 - v) + TRACKING_K * s * s * (1.0 - s) * v
+
+def _path_tracking(v: float, s: float) -> float:
+    # minimal + tracking term: v(1-v)(1-s) + k*v^2(1-v)*s
+    return v * (1.0 - v) * (1.0 - s) + TRACKING_K * v * v * (1.0 - v) * s
+
 def _mortality_chronic(v: float, s: float) -> float:
     """Chronic model: immunity modulates virulence damage via (1-s) factor.
     Uses same parameters as acute (d0, nS, nV, eps from _HLP)."""
@@ -286,6 +305,7 @@ FITNESS_FUNCS: Dict[str, Tuple[Callable, Callable]] = {
     "acute":   (_host_acute,   _path_acute),
     "chronic": (_host_chronic, _path_chronic),
     "minimal": (_host_minimal, _path_minimal),
+    "tracking": (_host_tracking, _path_tracking),
     "taylor":  (_host_taylor,  _path_taylor),
 }
 
