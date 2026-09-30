@@ -34,6 +34,22 @@ try:
 except ImportError:
     HAS_SCIPY = False
 
+    def _erfinv(y: float) -> float:
+        """Inverse error function by bisection on math.erf.
+
+        The mutation grid needs 50 of these once per run, so precision matters
+        more than speed. Without this, a missing scipy silently changed the
+        mutation step distribution (see make_equal_prob_steps).
+        """
+        lo, hi = -6.0, 6.0
+        for _ in range(100):
+            mid = 0.5 * (lo + hi)
+            if math.erf(mid) < y:
+                lo = mid
+            else:
+                hi = mid
+        return 0.5 * (lo + hi)
+
 # ============================================================
 # Runner-overridden globals (run_experiments.py sets these)
 # ============================================================
@@ -56,10 +72,28 @@ FIX_PATH_REACTIVITY = False
 FIX_HOST_TRAIT: Optional[float] = None   # e.g. 0.5 to pin s=0.5
 FIX_PATH_TRAIT: Optional[float] = None   # e.g. 0.5 to pin v=0.5
 
+# Mutation step grid: "quantile" = expected z within equal-probability Gaussian
+# bins (the Java model); "linear" = evenly spaced z in [-3, 3], which is what ran
+# whenever scipy was absent and which inflates the effective step size by 1.77x.
+STEP_GRID = "quantile"
+
 USE_BOUNDED_TRAITS = True
 USE_GAUSSIAN = False
 USE_SIMPLE_PROPOSALS = False  # True: one-at-a-time Gaussian proposals (no grid)
 DIPLOID_KIMURA = False  # True: 4Ns denominator (diploid semi-dominant); False: 2Ns (haploid)
+
+# Which equilibrium is realised when the paired response rules have several.
+# This can only happen when mS*mV > 1; otherwise the fixed point is unique and
+# the two rules agree exactly.
+#   "anchor"  (default) the one the behavioural dynamics reach from the
+#             pre-substitution phenotype, i.e. whose basin of attraction the
+#             interaction is already in: the rules act on the phenotypes the
+#             players express, so the interaction carries over a substitution
+#   "mutant"  the one best for the player that just substituted. This was the
+#             original rule; it lets a mutant pick its own phenotype and can
+#             realise the repelling fixed point. Kept for the SI comparison.
+EQ_SELECTION = "anchor"
+EQ_RATE_RATIO = 1.0   # host:pathogen speed of behavioural adjustment, "anchor" only
 
 # Model-specific trait domain.  set_fitness_model() adjusts these.
 TRAIT_MIN = 0.0
@@ -150,17 +184,46 @@ def wrap_angle(theta: float) -> float:
     return (theta + 2.0 * math.pi) % math.pi
 
 
+def step_grid_stats(steps: List[float]) -> Dict[str, float]:
+    """Mean and SD of the mutation step grid, recorded in every config.json.
+
+    The grid silently changed once already (a missing scipy swapped the
+    equal-probability bins for evenly spaced ones, SD 1.77 instead of 1.0), and
+    nothing in the output said so. Writing these two numbers alongside the runs
+    makes that class of change visible after the fact.
+    """
+    n = len(steps)
+    mean = sum(steps) / n
+    sd = math.sqrt(sum((x - mean) ** 2 for x in steps) / n)
+    return {"n": n, "mean": mean, "sd": sd}
+
+
+def check_step_grid(steps: List[float]) -> Dict[str, float]:
+    """Fail loudly if the quantile grid is not what it should be."""
+    st = step_grid_stats(steps)
+    if STEP_GRID == "quantile" and len(steps) >= 3:
+        if abs(st["mean"]) > 1e-9 or abs(st["sd"] - 0.997) > 0.01:
+            raise RuntimeError(
+                f"mutation step grid is not the equal-probability one: "
+                f"mean={st['mean']:.3g}, sd={st['sd']:.3g} (expected 0, 0.997)")
+    return st
+
+
 def make_equal_prob_steps(n_bins: int) -> List[float]:
     """
     Reproduce Java makeSteps(): compute expected z-scores within each of
     n_bins equal-probability Gaussian quantile bins.
 
     Each step represents the expected value of Z within an equal-probability
-    slice of the standard normal, so all steps are equally likely.
-    Falls back to linearly-spaced z-scores if scipy is unavailable.
+    slice of the standard normal, so all steps are equally likely. scipy is
+    optional: without it the inverse error function is bisected from math.erf,
+    which gives the same grid (it used to fall back to a linear grid instead).
     """
-    if not HAS_SCIPY or n_bins < 3:
-        # Fallback: linearly spaced z-scores
+    if STEP_GRID == "linear" or n_bins < 3:
+        # Linearly spaced z-scores. This was the fallback whenever scipy was
+        # missing, so every run made before 2026-09-23 used it. Its steps have
+        # SD 1.77 instead of 1.0, i.e. sigma behaved 1.77x larger than stated.
+        # Kept only to reproduce those runs.
         zmax = 3.0
         return [(-zmax + 2 * zmax * i / (n_bins - 1)) for i in range(n_bins)]
 
@@ -366,6 +429,103 @@ def _best_equilibrium_for_player(eqs: List[Equilibrium], player: str) -> Optiona
         key = lambda e: path_fitness(e.v, e.s)
     return max(eqs, key=key)
 
+
+def _flow_endpoint(c: float, v: float, bS: float, mS: float, bV: float, mV: float,
+                   rate_ratio: float = 1.0, tol: float = 1e-11,
+                   max_steps: int = 400_000) -> Tuple[float, float]:
+    """Integrate the clamped response dynamics from (c, v) to their limit:
+
+        dc/dt = rate_ratio * (clamp(bS + mS*v) - c)
+        dv/dt =              (clamp(bV + mV*c) - v)
+
+    Divergence is negative everywhere, so by Bendixson's criterion there are no
+    limit cycles and the flow always ends on a fixed point. RK4, fixed step.
+    """
+    h = 0.05 / max(rate_ratio, 1.0)
+    def rhs(c, v):
+        return rate_ratio * (clamp01(bS + mS * v) - c), clamp01(bV + mV * c) - v
+    for _ in range(max_steps):
+        k1 = rhs(c, v)
+        k2 = rhs(c + .5 * h * k1[0], v + .5 * h * k1[1])
+        k3 = rhs(c + .5 * h * k2[0], v + .5 * h * k2[1])
+        k4 = rhs(c + h * k3[0], v + h * k3[1])
+        dc = h * (k1[0] + 2 * k2[0] + 2 * k3[0] + k4[0]) / 6
+        dv = h * (k1[1] + 2 * k2[1] + 2 * k3[1] + k4[1]) / 6
+        c, v = clamp01(c + dc), clamp01(v + dv)
+        if abs(dc) < tol and abs(dv) < tol:
+            break
+    return c, v
+
+
+def _equilibrium_from_anchor(eqs: List[Equilibrium], c_anchor: float, v_anchor: float,
+                             bS: float, mS: float, bV: float, mV: float,
+                             rate_ratio: float = 1.0) -> Optional[Equilibrium]:
+    """Equilibrium whose basin of attraction holds the pre-substitution state.
+
+    The interaction state carries over across a substitution: the new rules act
+    on the phenotypes the players already express, so the realised phenotype is
+    the one the behavioural dynamics reach from there. With one equilibrium this
+    is that equilibrium; with several (only possible when mS*mV > 1) it selects
+    among them without reference to either player's fitness.
+    """
+    if not eqs:
+        return None
+    if len(eqs) == 1:
+        return eqs[0]
+
+    # Fast path. Where neither rule is clamped the dynamics are linear, so the
+    # basin boundary is the saddle's stable manifold: a straight line through
+    # the saddle along the stable eigenvector. Which side the anchor is on then
+    # decides the basin exactly, because a trajectory cannot cross that line.
+    saddle = _solve_interior(bS, mS, bV, mV)
+    if saddle is not None:
+        v_sad, c_sad = saddle
+        unclamped = (0.0 <= bS + mS * v_anchor <= 1.0 and
+                     0.0 <= bV + mV * c_anchor <= 1.0 and
+                     0.0 < c_sad < 1.0 and 0.0 < v_sad < 1.0)
+        if unclamped:
+            a, b = rate_ratio, 1.0          # dc/dt scaled by a, dv/dt by b
+            tr = -(a + b)
+            det = a * b * (1.0 - mS * mV)
+            disc = tr * tr - 4.0 * det
+            if disc > 0.0:                  # saddle: one positive eigenvalue
+                root = math.sqrt(disc)
+                lam_u, lam_s = 0.5 * (tr + root), 0.5 * (tr - root)
+                # eigenvectors of [[-a, a*mS], [b*mV, -b]] in (c, v)
+                eu = (a * mS, a + lam_u)
+                es = (a * mS, a + lam_s)
+                basis = eu[0] * es[1] - eu[1] * es[0]
+                if abs(basis) > 1e-12:
+                    def along_unstable(c, v):
+                        dc, dv = c - c_sad, v - v_sad
+                        return (dc * es[1] - dv * es[0]) / basis
+                    side = along_unstable(c_anchor, v_anchor)
+                    if abs(side) > 1e-9:    # far enough from the separatrix
+                        cand = [e for e in eqs
+                                if (abs(e.s - c_sad) > 1e-9 or abs(e.v - v_sad) > 1e-9)
+                                and along_unstable(e.s, e.v) * side > 0]
+                        if len(cand) == 1:
+                            return cand[0]
+
+    # Otherwise (anchor in a clamped region, or too close to the separatrix)
+    # integrate the dynamics and see where they settle.
+    c_end, v_end = _flow_endpoint(c_anchor, v_anchor, bS, mS, bV, mV, rate_ratio)
+    best = min(eqs, key=lambda e: abs(e.s - c_end) + abs(e.v - v_end))
+    if abs(best.s - c_end) + abs(best.v - v_end) > 1e-6:
+        # The flow settled on a fixed point the 256-point scan missed: two of
+        # them can lie ~1e-3 apart. Snapping to the nearest listed root would
+        # return a point the dynamics do not reach (and can be the repelling
+        # one), so realise where the flow actually ended.
+        return Equilibrium(
+            v=v_end, s=c_end,
+            interior=(TRAIT_MIN + 1e-9 < v_end < TRAIT_MAX - 1e-9 and
+                      TRAIT_MIN + 1e-9 < c_end < TRAIT_MAX - 1e-9),
+            stable=True,
+            host_max=(c_end <= TRAIT_MIN + 1e-9 or c_end >= TRAIT_MAX - 1e-9),
+            path_max=(v_end <= TRAIT_MIN + 1e-9 or v_end >= TRAIT_MAX - 1e-9),
+            nash=True)
+    return best
+
 def _solve_interior(bS: float, mS: float, bV: float, mV: float) -> Optional[Tuple[float, float]]:
     """Solve unclamped linear system for interior intersection.
 
@@ -405,14 +565,80 @@ def _bisect_root(g, lo: float, hi: float, tol: float = 1e-12,
             g_lo = g_mid
     return (lo + hi) * 0.5
 
-def _find_all_roots(bS: float, mS: float, bV: float, mV: float,
-                    n_scan: int = 256, tol: float = 1e-12
+def _find_all_roots(bS: float, mS: float, bV: float, mV: float
                     ) -> List[Tuple[float, float]]:
-    """Find all fixed points of the composed clamped map.
+    """Every fixed point of the composed clamped map, by exact enumeration.
 
-    Scans [TRAIT_MIN, TRAIT_MAX] for sign changes of g(s), bisects each
-    bracket, and also checks endpoints.  Returns list of (v*, s*) pairs.
+    g(s) = clamp(bS + mS * clamp(bV + mV * s)) - s is piecewise affine with at
+    most four interior breakpoints: two where the inner clamp switches, two
+    where the outer one does. Each piece is affine, so it has at most one root,
+    solved in closed form. This replaces a 256-point sign-change scan, which
+    missed fixed points whenever two lay inside one cell (~0.7% of states, the
+    near-fold pairs that sit ~1e-3 apart) and cost about 23x more.
+
+    Returns a list of (v*, s*) pairs.
     """
+    lo, hi = TRAIT_MIN, TRAIT_MAX
+
+    def g_map(c: float) -> float:            # the composed map itself, not the residual
+        return clamp01(bS + mS * clamp01(bV + mV * c))
+
+    breaks = {lo, hi}
+    if mV != 0.0:                            # inner clamp switches on/off
+        for t in (lo, hi):
+            c = (t - bV) / mV
+            if lo < c < hi:
+                breaks.add(c)
+    if mS * mV != 0.0:                       # outer clamp switches, on the inner affine piece
+        for t in (lo, hi):
+            c = (t - bS - mS * bV) / (mS * mV)
+            if lo < c < hi:
+                breaks.add(c)
+
+    roots: List[float] = []
+    pts = sorted(breaks)
+    for a, b in zip(pts[:-1], pts[1:]):
+        if b - a < 1e-15:
+            continue
+        # Read the affine coefficients off the branch each clamp is on in this
+        # piece, rather than estimating them by finite differences: on a piece
+        # only ~1e-4 wide with slopes up to 1/ANGLE_EPS, differencing loses all
+        # precision and both misses roots and returns inaccurate ones.
+        mid = 0.5 * (a + b)
+        u_raw = bV + mV * mid
+        if u_raw <= lo or u_raw >= hi:                 # inner rule clamped: u is constant
+            u_const = lo if u_raw <= lo else hi
+            w = clamp01(bS + mS * u_const)             # so the whole piece maps to one value
+            slope, intercept = 0.0, w
+        else:
+            w_raw = bS + mS * u_raw
+            if w_raw <= lo or w_raw >= hi:             # outer rule clamped
+                slope, intercept = 0.0, (lo if w_raw <= lo else hi)
+            else:                                      # neither clamped: the linear regime
+                slope, intercept = mS * mV, bS + mS * bV
+        if abs(slope - 1.0) < 1e-12:                   # parallel to the diagonal
+            if abs(intercept) < 1e-12:                 # degenerate: the piece is all fixed
+                roots += [a, b]
+            continue
+        c_star = intercept / (1.0 - slope)
+        if a - 1e-12 <= c_star <= b + 1e-12:
+            roots.append(min(max(c_star, lo), hi))
+    for edge in (lo, hi):                    # fixed points sitting on a clamp
+        if abs(g_map(edge) - edge) < 1e-12:
+            roots.append(edge)
+
+    unique: List[float] = []
+    for c in sorted(roots):
+        if all(abs(c - d) > 1e-9 for d in unique):
+            unique.append(c)
+    return [(clamp01(bV + mV * c), c) for c in unique]
+
+
+def _find_all_roots_scan(bS: float, mS: float, bV: float, mV: float,
+                         n_scan: int = 256, tol: float = 1e-12
+                         ) -> List[Tuple[float, float]]:
+    """Superseded sign-change scan, kept to reproduce earlier runs and to test
+    the exact enumeration against."""
     lo, hi = TRAIT_MIN, TRAIT_MAX
     span = hi - lo
 
@@ -546,6 +772,7 @@ class Simulation:
         # Pre-compute step bins (equal-probability Gaussian quantiles)
         self._trait_steps = make_equal_prob_steps(num_step_bins)
         self._angle_steps = make_equal_prob_steps(num_step_bins)
+        check_step_grid(self._trait_steps)
 
         # Initialize traits randomly within [TRAIT_MIN, TRAIT_MAX]
         if FIX_PATH_TRAIT is not None:
@@ -584,7 +811,13 @@ class Simulation:
 
     def _refresh_equilibrium(self, selector: str, track: bool = False):
         eqs = find_all_equilibria(self.bS, self.mS, self.bV, self.mV)
-        best = _best_equilibrium_for_player(eqs, selector)
+        if EQ_SELECTION == "anchor":
+            # Continuity: the new rules act on the phenotypes already expressed
+            best = _equilibrium_from_anchor(eqs, self.s, self.v,
+                                            self.bS, self.mS, self.bV, self.mV,
+                                            EQ_RATE_RATIO)
+        else:
+            best = _best_equilibrium_for_player(eqs, selector)
         if best is None:
             # Should be unreachable: Brouwer guarantees at least one root
             import warnings
@@ -728,11 +961,17 @@ class Simulation:
                     candidates.append(( ("ET", v2, s2, scoef, {}), rate ))
                     cum_rate += rate
         else:
-            # ER mode: sFactor = 1
+            # ER mode. A player whose slope is pinned proposes only its 51 trait
+            # steps, against a plastic partner's 51 x 51, so it carries the same
+            # dimensional weight the ET branch applies (Java: sFactor is set from
+            # fixedS alone, whatever the partner is doing). Without this the
+            # pinned player's mutational supply is 51x too low in the mixed
+            # scenarios, and the imbalance would scale with the grid size.
+            s_factor = len(self._trait_steps) if FIX_HOST_REACTIVITY else 1.0
             saved = (self.bS, self.s_angle, self.mS, self.v, self.s,
                      self.host_fit, self.path_fit)
             for (bS2, s_ang2, mS2) in self._propose_ER_mutants_host():
-                neut_count += 1
+                neut_count += s_factor
                 self.bS, self.s_angle, self.mS = bS2, s_ang2, mS2
                 diag = self._refresh_equilibrium(selector="host")
                 f2 = self.host_fit
@@ -742,7 +981,7 @@ class Simulation:
                  self.host_fit, self.path_fit) = saved
 
                 scoef = (f2 - current_fit) / (current_fit + TINY)
-                rate = kimura_rate(scoef, HOST_POP_N)
+                rate = kimura_rate(scoef, HOST_POP_N) * s_factor
                 if rate > 1e-4:
                     candidates.append(( ("ER", bS2, s_ang2, mS2, scoef, diag), rate ))
                     cum_rate += rate
@@ -768,11 +1007,12 @@ class Simulation:
                     candidates.append(( ("ET", v2, s2, scoef, {}), rate ))
                     cum_rate += rate
         else:
-            # ER mode: vFactor = 1
+            # ER mode; see _evaluate_host_mutations for the pinned-player weight
+            v_factor = len(self._trait_steps) if FIX_PATH_REACTIVITY else 1.0
             saved = (self.bV, self.v_angle, self.mV, self.v, self.s,
                      self.host_fit, self.path_fit)
             for (bV2, v_ang2, mV2) in self._propose_ER_mutants_path():
-                neut_count += 1
+                neut_count += v_factor
                 self.bV, self.v_angle, self.mV = bV2, v_ang2, mV2
                 diag = self._refresh_equilibrium(selector="path")
                 f2 = self.path_fit
@@ -782,7 +1022,7 @@ class Simulation:
                  self.host_fit, self.path_fit) = saved
 
                 scoef = (f2 - current_fit) / (current_fit + TINY)
-                rate = kimura_rate(scoef, PATH_POP_N)
+                rate = kimura_rate(scoef, PATH_POP_N) * v_factor
                 if rate > 1e-4:
                     candidates.append(( ("ER", bV2, v_ang2, mV2, scoef, diag), rate ))
                     cum_rate += rate

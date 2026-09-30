@@ -1,7 +1,7 @@
 # =============================================================================
 # timeshift_plots.R — figures for the time-shift (cross-inoculation) assay
 #
-# Reads what timeshift.py writes to results/timeshift/:
+# Reads what timeshift.py writes to data/timeshift/:
 #   timeshift_main.csv          main runs: 4 reps, delta in records
 #                               (1 record = 10 substitutions), sym + allo
 #   timeshift_zoom.csv          zoom runs: write_every = 1, delta in single
@@ -41,9 +41,9 @@ if (!exists("mytheme")) {
     )
 }
 
-dir.create("figures", showWarnings = FALSE)
+dir.create("output/figures", showWarnings = FALSE, recursive = TRUE)
 
-TS_DIR <- "results/timeshift"
+TS_DIR <- "data/timeshift"
 
 COND_LABELS <- c(
   EThost_ETpath = "ET / ET",
@@ -87,7 +87,7 @@ pick_se <- function(d, response = "W_P") {
 # positively correlated, so this SE is smaller -- and correct -- compared with
 # adding the two cell SEs in quadrature.
 lineage_contrast <- function(which, model, protocol,
-                             settle_mode = "solver-path",
+                             settle_mode = "flow-contemporary",
                              response = "W_P", k = NULL) {
   p <- load_pairs(which)
   if (is.null(p)) return(NULL)
@@ -151,7 +151,7 @@ add_tense <- function(df) {
 fig_timeshift_profile <- function(which = "zoom",
                                   model = "minimal",
                                   protocol = "rule",
-                                  settle_mode = "solver-path",
+                                  settle_mode = "flow-contemporary",
                                   response = c("W_P", "W_H"),
                                   sympatric_only = TRUE,
                                   delta_range = NULL,
@@ -196,7 +196,7 @@ fig_timeshift_profile <- function(which = "zoom",
 # =============================================================================
 fig_timeshift_sympatry <- function(model = "minimal",
                                    protocol = "rule",
-                                   settle_mode = "solver-path",
+                                   settle_mode = "flow-contemporary",
                                    filename = NULL,
                                    width = 11, height = 3.4,
                                    which = "main") {
@@ -242,7 +242,7 @@ fig_timeshift_sympatry <- function(model = "minimal",
 # explanatory placeholder instead of silently showing minimal-model bars.
 # =============================================================================
 fig_timeshift_decomposition <- function(protocol = "rule",
-                                        settle_mode = "solver-path",
+                                        settle_mode = "flow-contemporary",
                                         delta_at = 0,
                                         filename = NULL,
                                         width = 7.5, height = 4,
@@ -258,7 +258,7 @@ fig_timeshift_decomposition <- function(protocol = "rule",
     )
   }
 
-  d <- load_timeshift("main") %>%
+  d <- load_timeshift("zoom") %>%
     filter(fitness_model == "minimal", protocol == !!protocol,
            delta == delta_at) %>%
     { if (protocol == "rule") filter(., settle == settle_mode) else . } %>%
@@ -330,11 +330,11 @@ fig_timeshift_decomposition <- function(protocol = "rule",
 # =============================================================================
 fig_timeshift_matching <- function(model = "minimal", delta_at = 0,
                                    filename = NULL, width = 6, height = 4) {
-  lc <- lineage_contrast("main", model, "phenotype")
+  lc <- lineage_contrast("zoom", model, "phenotype")
   d <- if (!is.null(lc) && any(lc$delta == delta_at)) {
     lc %>% filter(delta == delta_at) %>% select(condition, est, se)
   } else {
-    load_timeshift("main") %>%
+    load_timeshift("zoom") %>%
       filter(fitness_model == model, protocol == "phenotype",
              delta == delta_at) %>%
       select(condition, sympatric, W_P_mean, W_P_se) %>%
@@ -380,7 +380,7 @@ fig_timeshift <- function(model = "minimal",
   lin_txt <- sprintf("%d lineage%s", n_lin, if (n_lin == 1) "" else "s")
   sym_from <- if (any(zm$sympatric == 0)) "zoom" else "main"
 
-  pA <- fig_timeshift_profile("zoom", model, "rule", "solver-path") +
+  pA <- fig_timeshift_profile("zoom", model, "rule", "flow-contemporary") +
     labs(title = paste0("A  Rule shift (live cross-infection), zoom runs, ", lin_txt))
   pB <- fig_timeshift_profile("zoom", model, "phenotype") +
     labs(title = paste0("B  Phenotype shift (induction blocked), zoom runs, ", lin_txt))

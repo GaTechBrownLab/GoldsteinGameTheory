@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # run_tracking_sweep.sh — tracking-strength sweep: k = 0-4 x 4 conditions x
-# 8 replicates -> results/tracking/ (S8, S9)
+# 8 replicates -> data/main/tracking/ (S8, S9)
 #
 # 10K recorded substitutions behind the FULL 10K burn-in. Checked against 100K
 # runs: 10K windows reproduce SD(v) and corr(W_H,W_P) without bias, and with
@@ -17,7 +17,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-OUT=${OUT:-results}
+OUT=${OUT:-data/main}
 REPS=${REPS:-8}
 GENS=${GENS:-10000}
 BURN=${BURN:-10000}
@@ -38,7 +38,7 @@ for c in $CONDS; do
       grep -q 'Done!' "$log" 2>/dev/null && continue
       ps -eww -o command | grep -F -- "--k $k -c $c --diploid --step-sizes 0.01 --rep $r --write-every" \
         | grep -v -e grep -e 'bash -c' | grep -q . && continue
-      echo "$PY run_experiments.py -f tracking --k $k -c $c --diploid --step-sizes 0.01 --rep $r --write-every $WRITE --gens $GENS --burn-in $BURN -o $OUT > $log 2>&1" >> "$CMDS"
+      echo "$PY src/run_experiments.py -f tracking --k $k -c $c --diploid --step-sizes 0.01 --rep $r --write-every $WRITE --gens $GENS --burn-in $BURN -o $OUT > $log 2>&1" >> "$CMDS"
     done
   done
 done
@@ -48,6 +48,6 @@ echo "$(date '+%F %T')  tracking sweep: $(wc -l < "$CMDS" | tr -d ' ') runs, $JO
 tr '\n' '\0' < "$CMDS" | xargs -0 -n 1 -P "$JOBS" bash -c
 # Wait for runs an earlier invocation left running (skipped above), so
 # "finished" only prints once every tracking run is really done
-while ps -eww -o command | grep -v grep | grep -q 'run_experiments.py -f tracking'; do sleep 60; done
+while ps -eww -o command | grep -v grep | grep -q 'src/run_experiments.py -f tracking'; do sleep 60; done
 echo "$(date '+%F %T')  tracking sweep finished"
 rm -f "$CMDS"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # run_zoom.sh — "zoom" runs that record every substitution (write_every = 1):
-# minimal model, 4 conditions x 8 replicates -> results_zoom/ (Fig 4C, S2, and
+# minimal model, 4 conditions x 8 replicates -> data/zoom/ (Fig 4C, S2, and
 # the Fig 5 time-shift assay, which needs >1 lineage for allopatric controls)
 #
 # sigma 0.01, diploid, 10 000 substitutions, burn-in 1 000 (gens/10).
@@ -23,7 +23,7 @@ MAX_REP=8
 JOBS=8
 DRY=0
 GENS=10000
-OUT="results_zoom"
+OUT="data/zoom"
 PY="${PYTHON:-python3}"
 
 while getopts "m:r:j:g:o:np:h" opt; do
@@ -32,7 +32,7 @@ while getopts "m:r:j:g:o:np:h" opt; do
     r) MAX_REP="$OPTARG" ;;
     j) JOBS="$OPTARG" ;;
     g) GENS="$OPTARG" ;;      # shorter runs, for smoke-testing the batch
-    o) OUT="$OPTARG" ;;       # output root (default results_zoom)
+    o) OUT="$OPTARG" ;;       # output root (default data/zoom)
     n) DRY=1 ;;
     p) PY="$OPTARG" ;;
     h) sed -n '2,17p' "$0"; exit 0 ;;
@@ -88,7 +88,7 @@ start=$(date +%s)
 run_one() {
   local model="$1" cond="$2" rep="$3" out="$4"
   local log="${LOGDIR}/${model}_${cond}_rep${rep}.log"
-  if "$PY" run_experiments.py -f "$model" -c "$cond" \
+  if "$PY" src/run_experiments.py -f "$model" -c "$cond" \
         --step-sizes 0.01 --diploid --gens "$GENS" --write-every 1 \
         --rep "$rep" --tag zoom -o "$out" > "$log" 2>&1; then
     echo "  [$(date +%H:%M)] done   ${model}/${cond} rep${rep}"

@@ -60,15 +60,13 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/
 
-# simulation output, logs and figures (regenerated; see README)
-results/
-results_gamma/
-results_zoom/
+# simulation output, figures, tables and logs (all regenerated; see README)
+data/
+output/
 logs/
-figures/
-diagnostics/
-postproc/
-_superseded/
+
+# runs kept for provenance after a behaviour-changing fix (see superseded/README.md)
+superseded/
 
 # safety net: data and rendered output are never committed, wherever they are
 # written (e.g. run_experiments.py -o scratch, or a figure saved elsewhere)

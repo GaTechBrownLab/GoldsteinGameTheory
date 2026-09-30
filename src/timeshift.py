@@ -300,9 +300,40 @@ def solve_pair(bS: float, mS: float, bV: float, mV: float,
                    iters=0, cycle_amp=0.0, slope_product=mS * mV)
 
 
+def flow_pair(bS: float, mS: float, bV: float, mV: float,
+              c_start: Optional[float] = None,
+              v_start: Optional[float] = None) -> Settled:
+    """Let the pair settle by continuous-time behavioural adjustment.
+
+        dc/dt = r * (clamp(bS + mS*v) - c)      dv/dt = clamp(bV + mV*c) - v
+
+    This is the assay's counterpart of the simulation's anchored rule
+    (simulation.EQ_SELECTION == "anchor"): both realise the equilibrium the
+    dynamics reach from the phenotypes in force when the pair is formed, so a
+    repelling fixed point is never expressed and no 2-cycle arises (the
+    divergence is negative everywhere).
+
+    Start points: the uninduced (constitutive) levels clamp(bS), clamp(bV) for
+    a freshly formed pairing, or the contemporary phenotypes, which is what the
+    simulation anchors on and what makes the sympatric delta = 0 cell reproduce
+    the recorded state exactly.
+    """
+    c0 = sim.clamp01(bS if c_start is None else c_start)
+    v0 = sim.clamp01(bV if v_start is None else v_start)
+    c, v = sim._flow_endpoint(c0, v0, bS, mS, bV, mV, sim.EQ_RATE_RATIO)
+    return Settled(v=v, c=c, status="fixed", iters=0, cycle_amp=0.0,
+                   slope_product=mS * mV)
+
+
 def resolve(bS: float, mS: float, bV: float, mV: float,
-            mode: str, c_contemporary: Optional[float] = None) -> Settled:
+            mode: str, c_contemporary: Optional[float] = None,
+            v_contemporary: Optional[float] = None) -> Settled:
     """Dispatch to the requested equilibrium-resolution convention."""
+    if mode == "flow":
+        return flow_pair(bS, mS, bV, mV)
+    if mode == "flow-contemporary":
+        return flow_pair(bS, mS, bV, mV, c_start=c_contemporary,
+                         v_start=v_contemporary)
     if mode == "naive":
         return settle_pair(bS, mS, bV, mV, c_start=None)
     if mode == "contemporary":
@@ -314,7 +345,8 @@ def resolve(bS: float, mS: float, bV: float, mV: float,
     raise ValueError(f"unknown settling mode {mode!r}")
 
 
-SETTLE_MODES = ("naive", "contemporary", "solver-host", "solver-path")
+SETTLE_MODES = ("flow", "flow-contemporary", "naive", "contemporary",
+                "solver-host", "solver-path")
 
 
 def n_equilibria(bS: float, mS: float, bV: float, mV: float) -> int:
@@ -409,7 +441,8 @@ def assay(path_run: Run, host_run: Run,
             else:
                 st = resolve(host_run.bS[hi], host_run.mS[hi],
                              path_run.bV[pi], path_run.mV[pi],
-                             mode=settle, c_contemporary=c_stored)
+                             mode=settle, c_contemporary=c_stored,
+                             v_contemporary=v_stored)
                 v, c = st.v, st.c
                 status, amp, sp = st.status, st.cycle_amp, st.slope_product
 
@@ -834,13 +867,17 @@ def main(argv=None) -> int:
                     choices=["rule", "phenotype"])
     ap.add_argument("--allopatric", action="store_true",
                     help="Include cross-lineage pairings (all rep pairs, not just matched).")
-    ap.add_argument("--settle", nargs="+", default=["naive"], choices=list(SETTLE_MODES),
+    ap.add_argument("--settle", nargs="+", default=["flow-contemporary"],
+                    choices=list(SETTLE_MODES),
                     help="Equilibrium-resolution convention(s) for the rule protocol. "
-                         "'naive'/'contemporary' iterate induction to a settled state, "
-                         "differing only in the starting clearance; 'solver-host'/"
-                         "'solver-path' reproduce the simulation's own convention and "
-                         "so make delta=0 exactly the recorded state. Pass several to "
-                         "emit them side by side. They agree except in ERhost_ERpath.")
+                         "'flow'/'flow-contemporary' settle by continuous-time "
+                         "adjustment, matching the simulation's anchored rule; the "
+                         "contemporary variant starts from the recorded phenotypes and "
+                         "so makes delta=0 exactly the recorded state. "
+                         "'naive'/'contemporary' iterate the discrete map instead, and "
+                         "'solver-host'/'solver-path' reproduce the superseded "
+                         "best-for-the-mutant rule. Pass several to emit them side by "
+                         "side. They agree except in ERhost_ERpath.")
     ap.add_argument("--count-roots", action="store_true",
                     help="Also count fixed points per pairing (slow; diagnostic).")
     ap.add_argument("--raw", default=None,

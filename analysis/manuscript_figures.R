@@ -19,16 +19,16 @@
 # Output: figures/<name>.pdf and .png
 # ============================================================================
 
-source("Plots.R")
+source("analysis/Plots.R")
 
-options(ggt.results_root = "results")
-OUT_DIR <- "figures"
+options(ggt.results_root = "data/main")
+OUT_DIR <- "output/figures"
 dir.create(OUT_DIR, showWarnings = FALSE, recursive = TRUE)
 SIGMA <- 0.01
 
-ZOOM_ROOT     <- "results_zoom"      # write_every = 1, tagged "zoom"
-TEMPO_ROOT    <- "results_gamma"
-TIMESHIFT_DIR <- "results/timeshift"
+ZOOM_ROOT     <- "data/zoom"      # write_every = 1, tagged "zoom"
+TEMPO_ROOT    <- "data/tempo"
+TIMESHIFT_DIR <- "data/timeshift"
 
 # Stop early, naming the script to run, when a figure's input is missing
 require_data <- function(path, script) {
@@ -73,7 +73,7 @@ fig1 <- function() {
 # The x axis counts substitutions (gen), not evolutionary time: over the same
 # 100K substitutions ET/ET covers ~1e4 times more evolutionary time than ER/ER.
 fig2 <- function() {
-  require_data("results/minimal", "scripts/run_main.sh")
+  require_data("data/main/minimal", "scripts/run_main.sh")
   p <- fig_timeseries("minimal", sigma = SIGMA, diploid = TRUE,
                       replicates = TRUE, max_pts = 400, highlight_rep = 1,
                       show_omega = FALSE, show_title = FALSE)
@@ -82,7 +82,7 @@ fig2 <- function() {
 
 # Fig 3: mechanism of destabilisation, drift -> amplification -> threshold -> boundary
 fig3 <- function(model = "minimal") {
-  require_data(file.path("results", model), "scripts/run_main.sh")
+  require_data(file.path("data/main", model), "scripts/run_main.sh")
   ev <- load_neutral_events(model, SIGMA)
   pA <- fig_neutral_fraction(ev)
   pB <- fig_decoupling(ev)
@@ -105,7 +105,7 @@ fig3 <- function(model = "minimal") {
 #   A omega/2N distributions, B per-replicate medians, C aligned zoom,
 #   D-E tempo sweep
 fig4 <- function(model = "minimal") {
-  require_data(file.path("results", model), "scripts/run_main.sh")
+  require_data(file.path("data/main", model), "scripts/run_main.sh")
   require_data(ZOOM_ROOT, "scripts/run_zoom.sh")
   require_data(TEMPO_ROOT, "scripts/run_tempo_sweep.sh")
   pA <- fig_omega(model_name = model, sigma = SIGMA, diploid = TRUE,
@@ -129,7 +129,7 @@ fig5 <- function(model = "minimal") {
   for (f in c("timeshift_zoom.csv", "timeshift_zoom_pairs.csv",
               "timeshift_main.csv", "timeshift_main_pairs.csv"))
     require_data(file.path(TIMESHIFT_DIR, f), "scripts/run_timeshift.sh main|zoom")
-  source("timeshift_plots.R")
+  source("analysis/timeshift_plots.R")
   TS_DIR <<- TIMESHIFT_DIR
 
   # This layout was designed around timeshift_plots.R's 12-pt theme; the larger
@@ -204,13 +204,13 @@ figS7 <- function() {
 
 # S8: tracking sweep, A virulence SD, B corr(W_H, W_P), C ER-host fitness vs ET/ET
 figS8 <- function() {
-  require_data("results/tracking", "scripts/run_tracking_sweep.sh")
+  require_data("data/main/tracking", "scripts/run_tracking_sweep.sh")
   save_fig(tagged(fig_tracking_sweep_si(TRACKING_KS, SIGMA)), "FigS8_tracking_sweep", 16, 5.5)
 }
 
 # S9: tracking-model ER/ER time series, one column per k
 figS9 <- function() {
-  require_data("results/tracking", "scripts/run_tracking_sweep.sh")
+  require_data("data/main/tracking", "scripts/run_tracking_sweep.sh")
   p <- fig_tracking_timeseries_ksweep(condition = "ERhost_ERpath", ks = TRACKING_KS,
                                       sigma = SIGMA, replicates = TRUE, max_pts = 400,
                                       highlight_rep = 1, show_omega = FALSE,
@@ -221,7 +221,7 @@ figS9 <- function() {
 
 # S10: acute-model time series, same layout as Fig 2
 figS10 <- function() {
-  require_data("results/acute", "scripts/run_main.sh")
+  require_data("data/main/acute", "scripts/run_main.sh")
   p <- fig_timeseries("acute", sigma = SIGMA, diploid = TRUE,
                       replicates = TRUE, max_pts = 400, highlight_rep = 1,
                       show_omega = FALSE, show_title = FALSE)
@@ -230,7 +230,7 @@ figS10 <- function() {
 
 # S11: acute-model diagnostics, analogues of Fig 3C, Fig 3F and Fig 4B
 figS11 <- function(model = "acute") {
-  require_data(file.path("results", model), "scripts/run_main.sh")
+  require_data(file.path("data/main", model), "scripts/run_main.sh")
   pA <- fig_step_sizes(model, sigma = SIGMA, diploid = TRUE, filename = NULL) +
     labs(title = NULL)
   pB <- fig_trait_occupancy(model_name = model, sigma = SIGMA, diploid = TRUE,
