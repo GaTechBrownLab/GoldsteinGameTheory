@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # run_tempo_sweep.sh — does mutational tempo control host boundary trapping?
-# minimal model, 3 gamma x 3 conditions x 4 replicates -> results_gamma/
+# minimal model, 3 gamma x 3 conditions x 4 replicates -> data/tempo/
 # (Fig 4D-E, S7)
 #
 # Equal population sizes (N_H = N_P = 1e4), so the tempo ratio
@@ -12,7 +12,7 @@
 # mirror images with v and c exchanged (the minimal model is symmetric), which
 # doubles as a check for asymmetries in the implementation.
 #
-# Written to results_gamma/ so these runs never pool with the main results
+# Written to data/tempo/ so these runs never pool with the main results
 # (the loaders filter on gamma but not on population size).
 # 10K recorded substitutions behind a full 10K burn-in, as for the tracking sweep.
 #
@@ -22,7 +22,7 @@
 set -uo pipefail
 cd "$(dirname "$0")/.."
 
-OUT=${OUT:-results_gamma}
+OUT=${OUT:-data/tempo}
 REPS=${REPS:-4}
 GENS=${GENS:-10000}
 BURN=${BURN:-10000}
@@ -39,7 +39,7 @@ CMDS=$(mktemp)
 for c in $CONDS; do
   for g in $GAMMAS; do
     for r in $(seq 1 "$REPS"); do
-      echo "$PY run_experiments.py -f minimal -c $c --diploid --step-sizes 0.01 --gamma $g --pop-size $N --path-pop-size $N --rep $r --write-every $WRITE --gens $GENS --burn-in $BURN -o $OUT > logs/tempo/g${g}_${c}_rep${r}.log 2>&1" >> "$CMDS"
+      echo "$PY src/run_experiments.py -f minimal -c $c --diploid --step-sizes 0.01 --gamma $g --pop-size $N --path-pop-size $N --rep $r --write-every $WRITE --gens $GENS --burn-in $BURN -o $OUT > logs/tempo/g${g}_${c}_rep${r}.log 2>&1" >> "$CMDS"
     done
   done
 done

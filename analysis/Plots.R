@@ -37,7 +37,7 @@ library(scales)
 library(zoo)
 library(jsonlite)
 
-dir.create("figures", showWarnings = FALSE)
+dir.create("output/figures", showWarnings = FALSE, recursive = TRUE)
 
 # --- Global theme ---
 mytheme <- theme_bw() +
@@ -431,7 +431,7 @@ calc_correlation_length <- function(x, threshold = 0.1, max_lag = NULL) {
 # ============================================================================
 # Every run directory holds config.json + simulation.csv. The catalog is built
 # from the JSON, so no paths are hard-coded. Point all loaders at one tree with
-#   options(ggt.results_root = "results")   # the default
+#   options(ggt.results_root = "data/main")   # the default
 
 
 # Global: minimum generation to include when loading data. Burn-in is already
@@ -446,8 +446,8 @@ MIN_GEN_CUTOFF <- 0
 #' Scan results/ tree and build a catalog of all experiments.
 #' Results are cached; call discover_experiments(refresh = TRUE) to re-scan.
 #' The root can also be set globally, so every figure reads the same tree:
-#'   options(ggt.results_root = "results")
-discover_experiments <- function(results_root = getOption("ggt.results_root", "results"),
+#'   options(ggt.results_root = "data/main")
+discover_experiments <- function(results_root = getOption("ggt.results_root", "data/main"),
                                  refresh = FALSE) {
 
   # Lazily create the cache if it wasn't defined (e.g. when sourcing only part
@@ -770,7 +770,7 @@ load_replicates <- function(model_name, sigma = 0.1, diploid = NULL,
                             tag_filter = NA, tag_prefix = NULL,
                             reps = NULL,
                             min_gen = MIN_GEN_CUTOFF,
-                            results_root = getOption("ggt.results_root", "results"),
+                            results_root = getOption("ggt.results_root", "data/main"),
                             keep_pre = FALSE) {
   cat <- discover_experiments(results_root)
 
@@ -1385,7 +1385,7 @@ fig_timeseries <- function(model_name = "acute", filename = NULL,
                            conditions = NULL,
                            highlight_rep = NULL, show_omega = TRUE,
                            window = NULL,
-                           results_root = getOption("ggt.results_root", "results"),
+                           results_root = getOption("ggt.results_root", "data/main"),
                            show_title = TRUE) {
 
   cond_names  <- c("EThost_ETpath", "EThost_ERpath", "ERhost_ETpath", "ERhost_ERpath")
@@ -1633,7 +1633,7 @@ fig_omega_timeseries <- function(model_name = "minimal", sigma = 0.01,
 #'     is non-stationary, so omega_H stays elevated while W_H is fine.
 #' Rows: explaining quantity, host fitness W_H, omega_H / 2N_H.
 fig_aligned_zoom <- function(model_name = "minimal", sigma = 0.01, diploid = TRUE,
-                             results_root = getOption("ggt.results_root", "results"),
+                             results_root = getOption("ggt.results_root", "data/main"),
                              tag_prefix = NULL, rep = 1, window = c(0, 2000)) {
   cols <- list(
     list(cond = "ERhost_ETpath", title = "ER host / ET path",

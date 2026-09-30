@@ -32,6 +32,24 @@ import datetime
 import argparse
 import importlib
 
+def _git_commit() -> str:
+    """Commit the code was at, with -dirty when the tree has edits. Four
+    behaviour-changing fixes in two days: each output folder should say which
+    code produced it."""
+    import subprocess
+    try:
+        h = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
+                           text=True, timeout=5, cwd=os.path.dirname(os.path.abspath(__file__)))
+        if h.returncode != 0:
+            return "unknown"
+        rev = h.stdout.strip()
+        d = subprocess.run(["git", "status", "--porcelain"], capture_output=True,
+                           text=True, timeout=5, cwd=os.path.dirname(os.path.abspath(__file__)))
+        return rev + ("-dirty" if d.stdout.strip() else "")
+    except Exception:
+        return "unknown"
+
+
 # =============================================================================
 # CONFIGURATION
 # =============================================================================
@@ -82,6 +100,9 @@ def run_single_condition(
     nS: float = None,
     nV: float = None,
     k: float = None,
+    eq_selection: str = None,
+    step_grid: str = None,
+    proposals: str = "grid",
 ) -> str:
     """Run a single experimental condition.
 
@@ -142,6 +163,12 @@ def run_single_condition(
         tags.append(f"nV{nV}")
     if k is not None:
         tags.append(f"k{k}")
+    if eq_selection is not None and eq_selection != "mutant":
+        tags.append(eq_selection)
+    if step_grid is not None and step_grid != "quantile":
+        tags.append(step_grid)
+    if proposals != "grid":
+        tags.append(proposals)
     if rep is not None:
         tags.append(f"rep{rep}")
     if tag is not None:
@@ -172,11 +199,9 @@ def run_single_condition(
     sim.DIPLOID_KIMURA = diploid
     sim.FIX_HOST_TRAIT = fix_host_trait
     sim.FIX_PATH_TRAIT = fix_path_trait
-    # For simple proposals test:
-    if tag is not None and "simple" in tag:
-        sim.USE_SIMPLE_PROPOSALS = True
-    else:
-        sim.USE_SIMPLE_PROPOSALS = False
+    # Proposal mode: the deterministic quantile grid, or random Gaussian draws
+    # (the tag-based switch this replaces fired on any tag containing "simple")
+    sim.USE_SIMPLE_PROPOSALS = (proposals == "random")
     if sigma is not None:
         sim.std_dev_move = sigma
     if gamma is not None:
@@ -193,6 +218,11 @@ def run_single_condition(
         sim.nV_HLP = nV
     if k is not None:
         sim.TRACKING_K = k
+    if eq_selection is not None:
+        # Which equilibrium is realised when the rules admit several
+        sim.EQ_SELECTION = eq_selection
+    if step_grid is not None:
+        sim.STEP_GRID = step_grid
     sim.max_gens = params["max_gens"]
     sim.burn_in_gens = params["burn_in_gens"]
     
@@ -224,6 +254,14 @@ def run_single_condition(
         "nV_HLP": sim.nV_HLP,
         "TRACKING_K": sim.TRACKING_K,
         "prob_host_mutate": sim.prob_host_mutate,
+        "EQ_SELECTION": sim.EQ_SELECTION,
+        "EQ_RATE_RATIO": sim.EQ_RATE_RATIO,
+        "STEP_GRID": sim.STEP_GRID,
+        "STEP_GRID_CHECK": sim.check_step_grid(sim.make_equal_prob_steps(sim.num_step_bins)),
+        "ROOT_FINDER": "exact-piecewise",
+        "DIM_WEIGHT": "per-player",   # pinned players weighted by num_step_bins, as in Simulate.java
+        "PROPOSALS": proposals,
+        "git_commit": _git_commit(),
         "FIX_HOST_TRAIT": fix_host_trait if fix_host_trait is not None else False,
         "FIX_PATH_TRAIT": fix_path_trait if fix_path_trait is not None else False,
         "rep": rep if rep is not None else 0,
@@ -303,6 +341,9 @@ def run_all_conditions(
     nS: float = None,
     nV: float = None,
     k: float = None,
+    eq_selection: str = None,
+    step_grid: str = None,
+    proposals: str = "grid",
 ) -> dict:
     """Run all 4 conditions for a fitness model."""
     results = {}
@@ -326,6 +367,9 @@ def run_all_conditions(
             nS=nS,
             nV=nV,
             k=k,
+            eq_selection=eq_selection,
+            step_grid=step_grid,
+            proposals=proposals,
         )
         results[condition] = output_csv
 
@@ -573,6 +617,21 @@ Quick test (won't touch production results):
                         help="Run all 4 parameter sweeps for weak Nash dwell analysis (48 runs)")    
     parser.add_argument("--write-every", type=int, default=None,
                         help="Record every Nth substitution (1 = every mutation)")
+    parser.add_argument("--eq-selection", choices=["mutant", "anchor"], default=None,
+                        help="Which equilibrium is realised when the response rules "
+                             "admit several (only possible when mS*mV > 1). "
+                             "'mutant' (default) picks the one best for the player that "
+                             "just substituted; 'anchor' picks the one the behavioural "
+                             "dynamics reach from the pre-substitution phenotype.")
+    parser.add_argument("--proposals", choices=["grid", "random"], default="grid",
+                        help="How mutations are proposed each generation: the deterministic "
+                             "quantile grid (default), or random Gaussian draws of the same "
+                             "count, as a robustness check on the grid.")
+    parser.add_argument("--step-grid", choices=["quantile", "linear"], default=None,
+                        help="Mutation step grid. 'quantile' (default) is the Java model's "
+                             "equal-probability Gaussian bins; 'linear' reproduces runs made "
+                             "before 2026-09-23, when a missing scipy silently selected evenly "
+                             "spaced z-scores (effective sigma 1.77x larger).")
     parser.add_argument("--burn-in", type=int, default=None,
                         help="Burn-in generations before recording starts. Overrides the "
                              "default, which --gens otherwise shrinks to gens//10 — short "
@@ -700,6 +759,9 @@ Quick test (won't touch production results):
                     nS=args.nS,
                     nV=args.nV,
                     k=args.k,
+                    eq_selection=args.eq_selection,
+                    step_grid=args.step_grid,
+                    proposals=args.proposals,
                 )
             else:
                 results = run_all_conditions(
@@ -718,6 +780,9 @@ Quick test (won't touch production results):
                     nS=args.nS,
                     nV=args.nV,
                     k=args.k,
+                    eq_selection=args.eq_selection,
+                    step_grid=args.step_grid,
+                    proposals=args.proposals,
                 )
                 print(f"\n{'='*60}")
                 print("COMPLETE - Output files:")
